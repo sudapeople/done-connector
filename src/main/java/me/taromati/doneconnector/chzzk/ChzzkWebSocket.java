@@ -59,8 +59,9 @@ public class ChzzkWebSocket extends WebSocketClient {
     }
 
     public ChzzkWebSocket(String serverUri, String chatChannelId, String accessToken, 
-                       String extraToken, Map<String, String> chzzkUser,
-                       HashMap<Integer, List<String>> donationRewards) {
+                        String extraToken, Map<String, String> chzzkUser,
+                        HashMap<Integer, List<String>> donationRewards,
+                        ScheduledExecutorService sharedScheduler) {
         super(URI.create(serverUri));
         
         this.chatChannelId = chatChannelId;
@@ -69,11 +70,7 @@ public class ChzzkWebSocket extends WebSocketClient {
         this.chzzkUser = chzzkUser;
         this.donationRewards = donationRewards;
         
-        this.scheduler = Executors.newScheduledThreadPool(2, r -> {
-            Thread t = new Thread(r);
-            t.setName("ChzzkScheduler-" + chzzkUser.get("nickname"));
-            return t;
-        });
+        this.scheduler = sharedScheduler;  // 공유 스케줄러 사용
         this.reconnectAttempts = new AtomicInteger(0);
         this.random = new Random();
         this.connectionLock = new Object();
@@ -82,7 +79,6 @@ public class ChzzkWebSocket extends WebSocketClient {
         this.metricsCollector = new MetricsCollector(chzzkUser.get("nickname"));
 
         // 웹소켓 설정
-        this.setConnectionLostTimeout(30);
         this.setConnectionLostTimeout(CONNECTION_TIMEOUT_MS / 1000);
         
         // 모니터링 시작
@@ -566,58 +562,59 @@ public class ChzzkWebSocket extends WebSocketClient {
     public void shutdown() {
         synchronized (connectionLock) {
             if (isShuttingDown) {
-                return;  // 이미 종료 중이면 중복 실행 방지
+                return;
             }
             isShuttingDown = true;
             isAlive = false;
-            connectionState = ConnectionState.DISCONNECTED;
-
-            // 1. 실행 중인 모든 태스크 취소
-            for (Future<?> task : pendingTasks) {
-                task.cancel(true);
-            }
-            pendingTasks.clear();
-
-            // 2. 핑 스레드 종료
-            if (pingThread != null) {
-                pingThread.interrupt();
-                try {
-                    pingThread.join(5000);  // 최대 5초 대기
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                pingThread = null;
-            }
-
-            // 3. 스케줄러 종료
-            try {
-                scheduler.shutdown();
-                if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                    scheduler.shutdownNow();
-                    scheduler.awaitTermination(5, TimeUnit.SECONDS);
-                }
-            } catch (InterruptedException e) {
-                scheduler.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-
-            // 4. 웹소켓 연결 종료
-            try {
-                this.close();
-                Thread.sleep(5000); // 5초 대기
-                if (this.isOpen()) {
-                    // 강제 종료
-                    this.closeBlocking();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-
-            // 5. 메트릭 수집기 종료
-            metricsCollector.shutdown();
             
-            Logger.info("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                       "] 웹소켓이 정상적으로 종료되었습니다.");
+            try {
+                // 1. 연결 중인 작업들 취소
+                pendingTasks.forEach(task -> task.cancel(true));
+                pendingTasks.clear();
+                
+                // 2. 핑 스레드 종료
+                if (pingThread != null) {
+                    pingThread.interrupt();
+                    try {
+                        pingThread.join(2000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    pingThread = null;
+                }
+                
+                // 3. 웹소켓 종료
+                this.close(1000, "Shutdown requested");
+                CountDownLatch closeLatch = new CountDownLatch(1);
+                
+                Thread closeThread = new Thread(() -> {
+                    try {
+                        if (this.isOpen()) {
+                            this.closeBlocking();
+                        }
+                    } catch (Exception e) {
+                        Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
+                                "] 종료 중 오류: " + e.getMessage());
+                    } finally {
+                        closeLatch.countDown();
+                    }
+                });
+                closeThread.setDaemon(true);
+                closeThread.start();
+                
+                // 5초 타임아웃으로 종료 대기
+                if (!closeLatch.await(5, TimeUnit.SECONDS)) {
+                    Logger.warn("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
+                            "] 웹소켓 종료 타임아웃");
+                }
+                
+            } catch (Exception e) {
+                Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
+                        "] 종료 중 오류: " + e.getMessage());
+            } finally {
+                connectionState = ConnectionState.DISCONNECTED;
+                metricsCollector.shutdown();
+            }
         }
     }
 
