@@ -528,19 +528,18 @@ public class ChzzkWebSocket extends WebSocketClient {
     public void onClose(int code, String reason, boolean remote) {
         synchronized (connectionLock) {
             Logger.info(ChatColor.RED + "[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                       "] 웹소켓 연결이 종료되었습니다. (코드: " + code + ", 사유: " + reason + ")");
-            
+                    "] 웹소켓 연결이 종료되었습니다. (코드: " + code + ", 사유: " + reason + ")");
+
             connectionState = ConnectionState.DISCONNECTED;
-            
-            if (pingThread != null) {
+
+            if (pingThread!= null) {
                 pingThread.interrupt();
                 pingThread = null;
             }
-            
-            // 즉시 재연결 시도
-            if (reconnectAttempts.get() < MAX_RECONNECT_ATTEMPTS) {
-                scheduler.schedule(this::attemptReconnect, 
-                                RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS);
+
+            // 자동 재연결 로직 복원
+            if (isAlive) {
+                attemptReconnect();
             }
         }
     }
@@ -553,7 +552,10 @@ public class ChzzkWebSocket extends WebSocketClient {
         synchronized (connectionLock) {
             if (connectionState == ConnectionState.CONNECTED) {
                 connectionState = ConnectionState.DISCONNECTED;
-                attemptReconnect();
+                // 자동 재연결 로직
+                if (isAlive) {
+                    attemptReconnect();
+                }
             }
         }
     }

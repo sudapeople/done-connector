@@ -27,6 +27,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CompletionException;
 
 
 import java.util.*;
@@ -38,6 +39,11 @@ public final class DoneConnector extends JavaPlugin implements Listener {
     public static boolean debug;
     public static boolean random;
     public static boolean poong = false;
+
+    private final Object chzzkLock = new Object();
+    private final Object soopLock = new Object();
+    private volatile boolean chzzkConnecting = false;
+    private volatile boolean soopConnecting = false;
 
     private static final List<Map<String, String>> chzzkUserList = new ArrayList<>();
     private static final List<Map<String, String>> soopUserList = new ArrayList<>();
@@ -64,34 +70,13 @@ public final class DoneConnector extends JavaPlugin implements Listener {
 
         try {
             loadConfig();
-        } catch (Exception e) {
-            Logger.error("설정 파일을 불러오는 중 오류가 발생했습니다.");
-            Logger.debug(e.getMessage());
-            Logger.error("플러그인을 종료합니다.");
-            Bukkit.getPluginManager().disablePlugin(this);
-
-            return;
-        }
-
-        try {
             connectChzzkList();
-        } catch (InterruptedException e) {
-            Logger.error("치지직 채팅에 연결 중 오류가 발생했습니다.");
-            Bukkit.getPluginManager().disablePlugin(this);
-
-            return;
-        }
-
-        try {
             connectSoopList();
-        } catch (InterruptedException e) {
-            Logger.error("숲 채팅에 연결 중 오류가 발생했습니다.");
+            Logger.info(ChatColor.GREEN + "플러그인 활성화 완료.");
+        } catch (Exception e) {
+            Logger.error("플러그인 초기화 중 오류가 발생했습니다: " + e.getMessage());
             Bukkit.getPluginManager().disablePlugin(this);
-
-            return;
         }
-
-        Logger.info(ChatColor.GREEN + "플러그인 활성화 완료.");
     }
 
     @Override
@@ -246,6 +231,142 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         Logger.info(ChatColor.GREEN + "후원 보상 목록 " + donationRewards.keySet().size() + "개 로드 완료.");
     }
 
+    private void safeReload() {
+        Logger.warn("후원 설정을 다시 불러옵니다.");
+        CompletableFuture<Void> reloadFuture = CompletableFuture.runAsync(() -> {
+            try {
+                doReload();
+            } catch (Exception e) {
+                Logger.error("설정 리로드 중 오류 발생: " + e.getMessage());
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                throw new CompletionException(e);
+            }
+        });
+
+        try {
+            reloadFuture.get(180, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            Logger.error("설정 리로드 작업 타임아웃");
+            reloadFuture.cancel(true);
+        } catch (InterruptedException e) {
+            Logger.error("설정 리로드 작업이 중단되었습니다");
+            Thread.currentThread().interrupt();
+            reloadFuture.cancel(true);
+        } catch (ExecutionException e) {
+            Logger.error("설정 리로드 작업 실패: " + e.getMessage());
+            if (e.getCause() != null) {
+                Logger.error("원인: " + e.getCause().getMessage());
+            }
+        }
+    }
+
+    private void doReload() throws InterruptedException {
+        // 1. 모든 웹소켓 연결 종료
+        CountDownLatch disconnectLatch = new CountDownLatch(2);
+        
+        // 치지직 연결 종료
+        CompletableFuture<Void> chzzkDisconnect = CompletableFuture.runAsync(() -> {
+            try {
+                Logger.debug("치지직 웹소켓 연결 종료 시작...");
+                for (ChzzkWebSocket webSocket : new ArrayList<>(chzzkWebSocketList)) {
+                    try {
+                        webSocket.shutdown();
+                    } catch (Exception e) {
+                        Logger.error("[ChzzkWebsocket] 웹소켓 종료 중 오류: " + e.getMessage());
+                    }
+                }
+                chzzkWebSocketList.clear();
+                Logger.debug("치지직 웹소켓 연결 종료 완료");
+            } finally {
+                disconnectLatch.countDown();
+            }
+        });
+
+        // 숲 연결 종료
+        CompletableFuture<Void> soopDisconnect = CompletableFuture.runAsync(() -> {
+            try {
+                Logger.debug("숲 웹소켓 연결 종료 시작...");
+                for (SoopWebSocket webSocket : new ArrayList<>(soopWebSocketList)) {
+                    try {
+                        webSocket.close();
+                        webSocket.closeBlocking();
+                    } catch (Exception e) {
+                        Logger.error("숲 웹소켓 종료 중 오류: " + e.getMessage());
+                    }
+                }
+                soopWebSocketList.clear();
+                Logger.debug("숲 웹소켓 연결 종료 완료");
+            } finally {
+                disconnectLatch.countDown();
+            }
+        });
+
+        // 최대 60초간 연결 종료 대기
+        if (!disconnectLatch.await(60, TimeUnit.SECONDS)) {
+            Logger.warn("일부 웹소켓 연결 종료 타임아웃 - 계속 진행합니다.");
+        }
+
+        // 2. 추가 5초 대기하여 소켓 정리 시간 확보
+        Thread.sleep(5000);
+
+        // 3. 설정 리로드
+        clearConfig();
+        loadConfig();
+
+        // 4. 새로운 연결 시작
+        reconnectAll();
+    }
+
+    private void reconnectAll() throws InterruptedException {
+        CountDownLatch connectLatch = new CountDownLatch(2);
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger totalConnections = new AtomicInteger(0);
+
+        // 치지직 연결
+        CompletableFuture<Void> chzzkConnect = CompletableFuture.runAsync(() -> {
+            try {
+                for (Map<String, String> chzzkUser : chzzkUserList) {
+                    totalConnections.incrementAndGet();
+                    if (connectChzzk(chzzkUser)) {
+                        successCount.incrementAndGet();
+                    }
+                }
+            } finally {
+                connectLatch.countDown();
+            }
+        });
+
+        // 숲 연결
+        CompletableFuture<Void> soopConnect = CompletableFuture.runAsync(() -> {
+            try {
+                for (Map<String, String> soopUser : soopUserList) {
+                    totalConnections.incrementAndGet();
+                    if (connectSoop(soopUser)) {
+                        successCount.incrementAndGet();
+                    }
+                }
+            } finally {
+                connectLatch.countDown();
+            }
+        });
+
+        // 최대 60초간 연결 대기
+        if (!connectLatch.await(60, TimeUnit.SECONDS)) {
+            Logger.warn("일부 연결 시도 타임아웃");
+        }
+
+        // 5. 결과 로깅
+        int total = totalConnections.get();
+        int success = successCount.get();
+        if (success == total) {
+            Logger.info(ChatColor.GREEN + "모든 연결 재설정 완료 (" + success + "/" + total + ")");
+        } else {
+            Logger.warn("일부 연결 실패 (" + success + "/" + total + " 성공)");
+        }
+    }
+
     private void disconnectByNickName(String target) {
         chzzkWebSocketList = chzzkWebSocketList.stream()
                 .filter(chzzkWebSocket -> {
@@ -313,9 +434,30 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
     }
 
-    private void connectChzzkList() throws InterruptedException {
-        for (Map<String, String> chzzkUser : chzzkUserList) {
-            connectChzzk(chzzkUser);
+    private void connectChzzkList() {
+        synchronized(chzzkLock) {
+            if (chzzkConnecting) {
+                Logger.warn("이미 치지직 연결 작업이 진행 중입니다.");
+                return;
+            }
+            chzzkConnecting = true;
+            try {
+                disconnectChzzkList();
+                Thread.sleep(2000); // 연결 종료 후 잠시 대기
+                
+                for (Map<String, String> chzzkUser : chzzkUserList) {
+                    try {
+                        connectChzzk(chzzkUser);
+                    } catch (Exception e) {
+                        Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
+                                "] 연결 중 오류: " + e.getMessage());
+                    }
+                }
+            } catch (Exception e) {
+                Logger.error("치지직 연결 중 오류 발생: " + e.getMessage());
+            } finally {
+                chzzkConnecting = false;
+            }
         }
     }
 
@@ -357,7 +499,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
     }
 
-    private boolean connectSoop(Map<String, String> soopUser) throws InterruptedException {
+    private boolean connectSoop(Map<String, String> soopUser) {
         String soopId = soopUser.get("id");
 
         try {
@@ -366,29 +508,87 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                     Collections.emptyList(),
                     Collections.singletonList(new Protocol("chat"))
             );
-            SoopWebSocket webSocket = new SoopWebSocket("wss://" + liveInfo.CHDOMAIN() + ":" + liveInfo.CHPT() + "/Websocket/" + liveInfo.BJID(), draft6455, liveInfo, soopUser, donationRewards, poong);
-            webSocket.connect();
-            soopWebSocketList.add(webSocket);
-            return true;
+            SoopWebSocket webSocket = new SoopWebSocket(
+                "wss://" + liveInfo.CHDOMAIN() + ":" + liveInfo.CHPT() + "/Websocket/" + liveInfo.BJID(), 
+                draft6455, 
+                liveInfo, 
+                soopUser, 
+                donationRewards, 
+                poong
+            );
+            
+            // 연결 시도
+            CompletableFuture<Boolean> connectFuture = new CompletableFuture<>();
+            Thread connectThread = new Thread(() -> {
+                try {
+                    webSocket.connectBlocking(5, TimeUnit.SECONDS);
+                    soopWebSocketList.add(webSocket);
+                    connectFuture.complete(true);
+                } catch (Exception e) {
+                    Logger.error("[SoopWebsocket][" + soopUser.get("nickname") + 
+                            "] 연결 실패: " + e.getMessage());
+                    connectFuture.complete(false);
+                }
+            });
+            connectThread.setDaemon(true);
+            connectThread.start();
+
+            return connectFuture.get(10, TimeUnit.SECONDS);
+
+        } catch (TimeoutException e) {
+            Logger.error("[SoopWebsocket][" + soopUser.get("nickname") + 
+                    "] 연결 시도 타임아웃: " + e.getMessage());
+            return false;
+        } catch (ExecutionException e) {
+            Logger.error("[SoopWebsocket][" + soopUser.get("nickname") + 
+                    "] 연결 실행 중 오류: " + e.getMessage());
+            return false;
+        } catch (InterruptedException e) {
+            Logger.error("[SoopWebsocket][" + soopUser.get("nickname") + 
+                    "] 연결이 중단되었습니다: " + e.getMessage());
+            Thread.currentThread().interrupt();
+            return false;
         } catch (Exception e) {
-            Logger.error("[SoopWebsocket][" + soopUser.get("nickname") + "] 숲 채팅에 연결 중 오류가 발생했습니다.");
+            Logger.error("[SoopWebsocket][" + soopUser.get("nickname") + 
+                    "] 숲 채팅에 연결 중 오류가 발생했습니다.");
             Logger.debug(e.getMessage());
             return false;
         }
     }
 
-    private void connectSoopList() throws InterruptedException {
-        for (Map<String, String> soopUser : soopUserList) {
-            connectSoop(soopUser);
+    private void connectSoopList() {
+        synchronized(soopLock) {
+            if (soopConnecting) {
+                Logger.warn("이미 숲 연결 작업이 진행 중입니다.");
+                return;
+            }
+            soopConnecting = true;
+            try {
+                disconnectSoopList();
+                Thread.sleep(2000); // 연결 종료 후 잠시 대기
+                
+                for (Map<String, String> soopUser : soopUserList) {
+                    try {
+                        connectSoop(soopUser);
+                    } catch (Exception e) {
+                        Logger.error("[SoopWebsocket][" + soopUser.get("nickname") + 
+                                "] 연결 중 오류: " + e.getMessage());
+                    }
+                }
+            } catch (Exception e) {
+                Logger.error("숲 연결 중 오류 발생: " + e.getMessage());
+            } finally {
+                soopConnecting = false;
+            }
         }
     }
 
-    private void disconnectSoopList() throws InterruptedException {
+    private void disconnectSoopList() {
         Logger.debug("숲 웹소켓 연결 종료 시작...");
         for (SoopWebSocket webSocket : new ArrayList<>(soopWebSocketList)) {
             try {
                 webSocket.close();
-                webSocket.closeBlocking();  // 연결이 완전히 종료될 때까지 대기
+                webSocket.closeBlocking();
             } catch (Exception e) {
                 Logger.error("숲 웹소켓 종료 중 오류: " + e.getMessage());
             }
@@ -398,9 +598,9 @@ public final class DoneConnector extends JavaPlugin implements Listener {
     }
 
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (label.equalsIgnoreCase("done") == false) {
+        if (!label.equalsIgnoreCase("done")) {
             return false;
-        } else if (sender.isOp() == false) {
+        } else if (!sender.isOp()) {
             sender.sendMessage(ChatColor.RED + "권한이 없습니다.");
             return false;
         } else if (args.length < 1) {
@@ -410,165 +610,160 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         try {
             String cmd = args[0];
 
-            if (cmd.equalsIgnoreCase("on")) {
-                Logger.warn("후원 기능을 활성화 합니다.");
-                connectChzzkList();
-                connectSoopList();
-            } else if (cmd.equalsIgnoreCase("off")) {
-                Logger.warn("후원 기능을 비활성화 합니다.");
-                disconnectChzzkList();
-                disconnectSoopList();
-            } else if (cmd.equalsIgnoreCase("reconnect")) {
-                Logger.warn("후원 기능을 재접속합니다.");
-
-                if (args.length < 2) {
-                    Logger.warn("all 혹은 스트리머 닉네임을 입력해주세요.");
-                    return false;
-                }
-
-                String target = args[1];
-                
-                // 비동기로 재연결 처리
-                CompletableFuture.runAsync(() -> {
+            switch (cmd.toLowerCase()) {
+                case "on":
+                    Logger.warn("후원 기능을 활성화 합니다.");
                     try {
-                        if (Objects.equals(target, "all")) {
-                            disconnectChzzkList();
-                            disconnectSoopList();
-                            
-                            // 약간의 지연을 주어 이전 연결이 완전히 종료되도록 함
-                            Thread.sleep(2000);
-                            
-                            connectChzzkList();
-                            connectSoopList();
-                            Logger.info(ChatColor.GREEN + "후원 기능 재 접속을 완료 했습니다.");
-                        } else {
-                            // 개별 재연결
-                            disconnectByNickName(target);
-                            Thread.sleep(1000);
-                            
-                            AtomicInteger reconnectCount = new AtomicInteger(0);
-                            
-                            // 치지직 재연결
-                            chzzkUserList.stream()
-                                .filter(user -> Objects.equals(user.get("nickname"), target) || 
-                                            Objects.equals(user.get("tag"), target))
-                                .forEach(user -> {
-                                    try {
-                                        if (connectChzzk(user)) {
-                                            reconnectCount.incrementAndGet();
-                                            Logger.info(ChatColor.GREEN + "[" + target + 
-                                                    "] 재 접속을 완료 했습니다.");
-                                        }
-                                    } catch (Exception e) {
-                                        Logger.error("[" + target + 
-                                                "] 채팅에 연결 중 오류가 발생했습니다.");
-                                    }
-                                });
-                            
-                            // 숲 재연결
-                            soopUserList.stream()
-                                .filter(user -> Objects.equals(user.get("nickname"), target) || 
-                                            Objects.equals(user.get("tag"), target))
-                                .forEach(user -> {
-                                    try {
-                                        if (connectSoop(user)) {
-                                            reconnectCount.incrementAndGet();
-                                            Logger.info(ChatColor.GREEN + "[" + target + 
-                                                    "] 재 접속을 완료 했습니다.");
-                                        }
-                                    } catch (Exception e) {
-                                        Logger.error("[" + target + 
-                                                "] 채팅에 연결 중 오류가 발생했습니다.");
-                                    }
-                                });
-
-                            if (reconnectCount.get() <= 0) {
-                                Logger.warn("닉네임을 찾을 수 없습니다.");
-                            }
-                        }
+                        connectChzzkList();
+                        connectSoopList();
                     } catch (Exception e) {
-                        Logger.error("재연결 중 오류 발생: " + e.getMessage());
+                        Logger.error("후원 기능 활성화 중 오류 발생: " + e.getMessage());
+                        return false;
                     }
-                });
-                
-                return true;
-            } else if (cmd.equalsIgnoreCase("add")) {
-                if (args.length < 5) {
-                    Logger.error("옵션 누락. /done add <플랫폼> <방송닉> <방송ID> <마크닉>");
-                    return false;
-                }
-                String platform = args[1];
-                String nickname = args[2];
-                String id = args[3];
-                String tag = args[4];
-
-                switch (platform) {
-                    case "치지직" -> {
-                        Map<String, String> userMap = new HashMap<>();
-                        userMap.put("nickname", nickname);
-                        userMap.put("id", id);
-                        userMap.put("tag", tag);
-
-                        if (connectChzzk(userMap)) {
-                            chzzkUserList.add(userMap);
-                        }
-                    }
-                    case "숲" -> {
-                        Map<String, String> userMap = new HashMap<>();
-                        userMap.put("nickname", nickname);
-                        userMap.put("id", id);
-                        userMap.put("tag", tag);
-                        if (connectSoop(userMap)) {
-                            soopUserList.add(userMap);
-                        }
-                    }
-                }
-
-            } else if (cmd.equalsIgnoreCase("reload")) {
-                Logger.warn("후원 설정을 다시 불러옵니다.");
-                try {
-                    // 1. 비동기로 웹소켓 연결 종료 처리
-                    CompletableFuture<Void> disconnectFuture = CompletableFuture.runAsync(() -> {
-                        try {
-                            disconnectChzzkList();
-                            disconnectSoopList();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                    });
-
-                    // 2. 최대 5초간 종료 대기
-                    try {
-                        disconnectFuture.get(5, TimeUnit.SECONDS);
-                    } catch (TimeoutException e) {
-                        Logger.warn("웹소켓 종료 타임아웃 - 강제 진행");
-                    }
-
-                    // 3. 설정 리로드
-                    clearConfig();
-                    loadConfig();
-
-                    // 4. 새로운 연결 시작
-                    connectChzzkList();
-                    connectSoopList();
-
-                    Logger.info(ChatColor.GREEN + "후원 설정 리로드가 완료되었습니다.");
                     return true;
-                } catch (Exception e) {
-                    Logger.error("설정 리로드 중 오류 발생: " + e.getMessage());
-                    e.printStackTrace();
+                    
+                case "off":
+                    Logger.warn("후원 기능을 비활성화 합니다.");
+                    try {
+                        disconnectChzzkList();
+                        disconnectSoopList();
+                    } catch (Exception e) {
+                        Logger.error("후원 기능 비활성화 중 오류 발생: " + e.getMessage());
+                        return false;
+                    }
+                    return true;
+                    
+                case "reconnect":
+                    if (args.length < 2) {
+                        Logger.warn("all 혹은 스트리머 닉네임을 입력해주세요.");
+                        return false;
+                    }
+                    
+                    String target = args[1];
+                    reconnectHandling(target);
+                    return true;
+                    
+                case "reload":
+                    Logger.warn("후원 설정을 다시 불러옵니다.");
+                    try {
+                        safeReload();
+                        return true;
+                    } catch (Exception e) {
+                        Logger.error("설정 리로드 중 오류 발생: " + e.getMessage());
+                        e.printStackTrace();
+                        return false;
+                    }
+                    
+                case "add":
+                    if (args.length < 5) {
+                        Logger.error("옵션 누락. /done add <플랫폼> <방송닉> <방송ID> <마크닉>");
+                        return false;
+                    }
+                    handleAddCommand(args);
+                    return true;
+                    
+                default:
                     return false;
-                }
-            } else {
-                return false;
             }
         } catch (Exception e) {
             Logger.error("커맨드 수행 중 오류가 발생했습니다.");
             e.printStackTrace();
             return false;
         }
+    }
 
-        return true;
+    private void reconnectHandling(String target) {
+        CompletableFuture.runAsync(() -> {
+            try {
+                if (target.equals("all")) {
+                    disconnectChzzkList();
+                    disconnectSoopList();
+                    Thread.sleep(2000);
+                    connectChzzkList();
+                    connectSoopList();
+                    Logger.info(ChatColor.GREEN + "후원 기능 재접속을 완료했습니다.");
+                } else {
+                    disconnectByNickName(target);
+                    Thread.sleep(1000);
+                    
+                    AtomicInteger reconnectCount = new AtomicInteger(0);
+                    
+                    reconnectSpecificUser(target, reconnectCount);
+                    
+                    if (reconnectCount.get() <= 0) {
+                        Logger.warn("닉네임을 찾을 수 없습니다.");
+                    }
+                }
+            } catch (InterruptedException e) {
+                Logger.error("재연결 작업이 중단되었습니다: " + e.getMessage());
+                Thread.currentThread().interrupt();
+            } catch (Exception e) {
+                Logger.error("재연결 중 오류 발생: " + e.getMessage());
+            }
+        });
+    }
+
+    private void reconnectSpecificUser(String target, AtomicInteger reconnectCount) {
+        // 치지직 재연결
+        chzzkUserList.stream()
+            .filter(user -> user.get("nickname").equalsIgnoreCase(target) || 
+                        user.get("tag").equalsIgnoreCase(target))
+            .forEach(user -> {
+                try {
+                    if (connectChzzk(user)) {
+                        reconnectCount.incrementAndGet();
+                        Logger.info(ChatColor.GREEN + "[" + target + "] 재접속을 완료했습니다.");
+                    }
+                } catch (Exception e) {
+                    Logger.error("[" + target + "] 채팅 연결 중 오류가 발생했습니다.");
+                }
+            });
+        
+        // 숲 재연결
+        soopUserList.stream()
+            .filter(user -> user.get("nickname").equalsIgnoreCase(target) || 
+                        user.get("tag").equalsIgnoreCase(target))
+            .forEach(user -> {
+                try {
+                    if (connectSoop(user)) {
+                        reconnectCount.incrementAndGet();
+                        Logger.info(ChatColor.GREEN + "[" + target + "] 재접속을 완료했습니다.");
+                    }
+                } catch (Exception e) {
+                    Logger.error("[" + target + "] 채팅 연결 중 오류가 발생했습니다.");
+                }
+            });
+    }
+
+    private void handleAddCommand(String[] args) {
+        String platform = args[1];
+        String nickname = args[2];
+        String id = args[3];
+        String tag = args[4];
+
+        Map<String, String> userMap = new HashMap<>();
+        userMap.put("nickname", nickname);
+        userMap.put("id", id);
+        userMap.put("tag", tag);
+
+        try {
+            switch (platform) {
+                case "치지직":
+                    if (connectChzzk(userMap)) {
+                        chzzkUserList.add(userMap);
+                    }
+                    break;
+                case "숲":
+                    if (connectSoop(userMap)) {
+                        soopUserList.add(userMap);
+                    }
+                    break;
+                default:
+                    Logger.error("지원하지 않는 플랫폼입니다: " + platform);
+            }
+        } catch (Exception e) {
+            Logger.error("사용자 추가 중 오류 발생: " + e.getMessage());
+        }
     }
 
     public List<String> onTabComplete(CommandSender sender, @NotNull Command cmd, @NotNull String label, String[] args) {
