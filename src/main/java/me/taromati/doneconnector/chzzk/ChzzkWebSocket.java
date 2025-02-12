@@ -3,7 +3,6 @@ package me.taromati.doneconnector.chzzk;
 import lombok.Getter;
 import me.taromati.doneconnector.DoneConnector;
 import me.taromati.doneconnector.Logger;
-import me.taromati.doneconnector.metrics.MetricsCollector;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.java_websocket.client.WebSocketClient;
@@ -11,13 +10,11 @@ import org.java_websocket.handshake.ServerHandshake;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
-import org.json.simple.parser.ParseException;
 
 import java.net.URI;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class ChzzkWebSocket extends WebSocketClient {
     private static final int MAX_RECONNECT_ATTEMPTS = 5;
@@ -25,7 +22,6 @@ public class ChzzkWebSocket extends WebSocketClient {
     private static final int INITIAL_BACKOFF_MS = 1000;
     private static final int MAX_BACKOFF_MS = 30000;
     private static final int CONNECTION_TIMEOUT_MS = 30000;
-    private static final int MAX_MESSAGE_QUEUE_SIZE = 1000;
     private static final int COMMAND_EXECUTION_TIMEOUT = 5000;
 
     private final String chatChannelId;
@@ -37,16 +33,13 @@ public class ChzzkWebSocket extends WebSocketClient {
     private final MetricsCollector metricsCollector;
     
     private final ScheduledExecutorService scheduler;
-    private final BlockingQueue<String> messageQueue;
     private final AtomicInteger reconnectAttempts;
-    private final AtomicLong messageCounter;
     private final Random random;
     private final Object connectionLock;
     
     private volatile ConnectionState connectionState;
     private volatile boolean isAlive;
     private Thread pingThread;
-    private Thread messageProcessingThread;
 
     private static final int CHZZK_CHAT_CMD_PING = 0;
     private static final int CHZZK_CHAT_CMD_PONG = 10000;
@@ -57,27 +50,16 @@ public class ChzzkWebSocket extends WebSocketClient {
 
     private final JSONParser jsonParser = new JSONParser();
 
+    private volatile boolean isShuttingDown = false;
+    private final Set<Future<?>> pendingTasks = ConcurrentHashMap.newKeySet();
+
     enum ConnectionState {
         CONNECTED, DISCONNECTED, CONNECTING, RECONNECTING
     }
 
-    @Override
-    public void send(String message) {
-        try {
-            super.send(message);
-        } catch (Exception e) {
-            Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                        "] 메시지 전송 실패: " + e.getMessage());
-            synchronized (connectionLock) {
-                connectionState = ConnectionState.DISCONNECTED;
-                attemptReconnect();
-            }
-        }
-    }
-
     public ChzzkWebSocket(String serverUri, String chatChannelId, String accessToken, 
-                         String extraToken, Map<String, String> chzzkUser,
-                         HashMap<Integer, List<String>> donationRewards) {
+                       String extraToken, Map<String, String> chzzkUser,
+                       HashMap<Integer, List<String>> donationRewards) {
         super(URI.create(serverUri));
         
         this.chatChannelId = chatChannelId;
@@ -91,9 +73,7 @@ public class ChzzkWebSocket extends WebSocketClient {
             t.setName("ChzzkScheduler-" + chzzkUser.get("nickname"));
             return t;
         });
-        this.messageQueue = new LinkedBlockingQueue<>(MAX_MESSAGE_QUEUE_SIZE);
         this.reconnectAttempts = new AtomicInteger(0);
-        this.messageCounter = new AtomicLong(0);
         this.random = new Random();
         this.connectionLock = new Object();
         this.connectionState = ConnectionState.DISCONNECTED;
@@ -102,11 +82,10 @@ public class ChzzkWebSocket extends WebSocketClient {
 
         // 웹소켓 설정
         this.setConnectionLostTimeout(30);
-        this.setConnectionLostTimeout(CONNECTION_TIMEOUT_MS / 1000); // milliseconds to seconds
+        this.setConnectionLostTimeout(CONNECTION_TIMEOUT_MS / 1000);
         
         // 모니터링 시작
         startConnectionMonitoring();
-        startMessageProcessing();
     }
 
     private void startConnectionMonitoring() {
@@ -117,37 +96,13 @@ public class ChzzkWebSocket extends WebSocketClient {
                 }
                 metricsCollector.updateMetrics(
                     connectionState.toString(),
-                    reconnectAttempts.get(),
-                    messageCounter.get(),
-                    messageQueue.size()
+                    reconnectAttempts.get()
                 );
             } catch (Exception e) {
                 Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
                            "] 모니터링 중 오류 발생: " + e.getMessage());
             }
         }, 30, 30, TimeUnit.SECONDS);
-    }
-
-    private void startMessageProcessing() {
-        messageProcessingThread = new Thread(() -> {
-            while (isAlive) {
-                try {
-                    String message = messageQueue.poll(1, TimeUnit.SECONDS);
-                    if (message != null) {
-                        processMessage(message);
-                    }
-                } catch (InterruptedException e) {
-                    Logger.info("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                            "] 메시지 처리 스레드가 종료됩니다.");
-                    Thread.currentThread().interrupt();
-                    break;
-                } catch (Exception e) {
-                    Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                               "] 메시지 처리 중 오류 발생: " + e.getMessage());
-                }
-            }
-        }, "ChzzkMessageProcessor-" + chzzkUser.get("nickname"));
-        messageProcessingThread.start();
     }
 
     private void attemptReconnect() {
@@ -160,7 +115,6 @@ public class ChzzkWebSocket extends WebSocketClient {
             connectionState = ConnectionState.RECONNECTING;
             int attempts = reconnectAttempts.incrementAndGet();
             
-            // 지수 백오프 계산
             int backoffMs = Math.min(
                 INITIAL_BACKOFF_MS * (1 << attempts),
                 MAX_BACKOFF_MS
@@ -188,6 +142,20 @@ public class ChzzkWebSocket extends WebSocketClient {
     }
 
     @Override
+    public void send(String message) {
+        try {
+            super.send(message);
+        } catch (Exception e) {
+            Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
+                        "] 메시지 전송 실패: " + e.getMessage());
+            synchronized (connectionLock) {
+                connectionState = ConnectionState.DISCONNECTED;
+                attemptReconnect();
+            }
+        }
+    }
+
+    @Override
     public void onOpen(ServerHandshake handshakedata) {
         synchronized (connectionLock) {
             connectionState = ConnectionState.CONNECTED;
@@ -202,10 +170,6 @@ public class ChzzkWebSocket extends WebSocketClient {
     }
 
     private void sendAuthenticationMessage() {
-    int maxRetries = 3;
-    int retryCount = 0;
-    
-    while (retryCount < maxRetries && connectionState == ConnectionState.CONNECTED) {
         try {
             JSONObject baseObject = new JSONObject();
             baseObject.put("ver", "2");
@@ -225,50 +189,22 @@ public class ChzzkWebSocket extends WebSocketClient {
             sendObject.put("bdy", bdyObject);
             
             send(sendObject.toJSONString());
-            return;
-        } catch (Exception e) {
-            retryCount++;
-            if (retryCount >= maxRetries) {
-                Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                           "] 인증 메시지 전송 실패: " + e.getMessage());
-                break;
-            }
-            Logger.warn("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                       "] 인증 메시지 전송 재시도 중... (" + retryCount + "/" + maxRetries + ")");
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-    }
-
-    // 모든 재시도 실패 시 재연결 시도
-    if (retryCount >= maxRetries) {
-        synchronized (connectionLock) {
-            connectionState = ConnectionState.DISCONNECTED;
-            attemptReconnect();
-        }
-    }
-}
-
-    @Override
-    public void onMessage(String message) {
-        try {
-            if (!messageQueue.offer(message)) {
-                Logger.warn("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                          "] 메시지 큐가 가득 찼습니다. 메시지 드롭됨.");
-                return;
-            }
-            messageCounter.incrementAndGet();
         } catch (Exception e) {
             Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                        "] 메시지 큐잉 중 오류 발생: " + e.getMessage());
+                        "] 인증 메시지 전송 실패: " + e.getMessage());
+            synchronized (connectionLock) {
+                connectionState = ConnectionState.DISCONNECTED;
+                attemptReconnect();
+            }
         }
     }
 
-    private void processMessage(String message) {
+    // onMessage 메소드 수정
+    @Override
+    public void onMessage(String message) {
+        if (isShuttingDown) {
+            return;  // 종료 중이면 메시지 처리 방지
+        }
         try {
             JSONObject messageObject = (JSONObject) jsonParser.parse(message);
             int cmd = Integer.parseInt(messageObject.get("cmd").toString());
@@ -278,7 +214,10 @@ public class ChzzkWebSocket extends WebSocketClient {
                     handlePing();
                     break;
                 case CHZZK_CHAT_CMD_PONG:
-                    Logger.debug("[ChzzkWebsocket][" + chzzkUser.get("nickname") + "] pong");
+                    // pong 로그 제거
+                    break;
+                case CHZZK_CHAT_CMD_CONNECT_RES:
+                    // 연결 응답 로그 제거
                     break;
                 case CHZZK_CHAT_CMD_DONATION:
                     handleDonation(messageObject);
@@ -287,30 +226,22 @@ public class ChzzkWebSocket extends WebSocketClient {
                     handleChat(messageObject);
                     break;
                 default:
-                    Logger.debug("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                               "] 알 수 없는 명령어: " + cmd);
+                    Logger.debug("[ChzzkWebsocket][" + chzzkUser.get("nickname") + "] 알 수 없는 명령어: " + cmd);
             }
-        } catch (ParseException e) {
-            Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                        "] 메시지 파싱 중 오류 발생: " + e.getMessage());
+        } catch (Exception e) {
+            Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + "] 메시지 처리 중 오류 발생: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
-    private void handlePing() {
-        JSONObject pongObject = new JSONObject();
-        pongObject.put("cmd", CHZZK_CHAT_CMD_PONG);
-        pongObject.put("ver", 2);
-        send(pongObject.toJSONString());
-        Logger.debug("[ChzzkWebsocket][" + chzzkUser.get("nickname") + "] ping");
-    }
-
+    // handleDonation 메소드 수정
     private void handleDonation(JSONObject messageObject) {
         try {
             JSONObject bdyObject = (JSONObject) ((JSONArray) messageObject.get("bdy")).get(0);
             String uid = (String) bdyObject.get("uid");
             String msg = (String) bdyObject.get("msg");
+            
             String nickname = "익명";
-
             if (!Objects.equals(uid, "anonymous")) {
                 String profile = (String) bdyObject.get("profile");
                 JSONObject profileObject = (JSONObject) jsonParser.parse(profile);
@@ -319,37 +250,38 @@ public class ChzzkWebSocket extends WebSocketClient {
 
             String extras = (String) bdyObject.get("extras");
             JSONObject extraObject = (JSONObject) jsonParser.parse(extras);
-
-            if (extraObject.get("payAmount") == null) {
+            
+            Object payAmountObj = extraObject.get("payAmount");
+            if (payAmountObj == null) {
+                return;
+            }
+            
+            int payAmount = Integer.parseInt(payAmountObj.toString());
+            
+            List<String> commands = donationRewards.get(payAmount);
+            if (commands == null) {
+                commands = donationRewards.get(0);
+            }
+            
+            if (commands == null || commands.isEmpty()) {
                 return;
             }
 
-            int payAmount = Integer.parseInt(extraObject.get("payAmount").toString());
             Logger.info(ChatColor.YELLOW + nickname + ChatColor.WHITE + "님께서 " + 
-                       ChatColor.GREEN + payAmount + "원" + ChatColor.WHITE + "을 후원해주셨습니다.");
-
-            processDonationRewards(nickname, payAmount, msg);
-
-        } catch (Exception e) {
-            Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                        "] 후원 처리 중 오류 발생: " + e.getMessage());
-        }
-    }
-
-    private void processDonationRewards(String nickname, int payAmount, String msg) {
-        List<String> commands = donationRewards.getOrDefault(payAmount, donationRewards.get(0));
-        
-        if (commands == null || commands.isEmpty()) {
-            return;
-        }
-
-        if (DoneConnector.random) {
-            String command = commands.get(random.nextInt(commands.size()));
-            executeCommand(chzzkUser.get("tag"), nickname, payAmount, msg, command);
-        } else {
-            for (String command : commands) {
+                    ChatColor.GREEN + payAmount + "원" + ChatColor.WHITE + "을 후원해주셨습니다.");
+            
+            if (DoneConnector.random) {
+                String command = commands.get(random.nextInt(commands.size()));
                 executeCommand(chzzkUser.get("tag"), nickname, payAmount, msg, command);
+            } else {
+                for (String command : commands) {
+                    executeCommand(chzzkUser.get("tag"), nickname, payAmount, msg, command);
+                }
             }
+            
+        } catch (Exception e) {
+            Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + "] 후원 처리 중 오류 발생: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -363,27 +295,115 @@ public class ChzzkWebSocket extends WebSocketClient {
                 return;
             }
 
+            // 프로필 정보 파싱
             String nickname = "익명";
+            String userRole = "일반";
+            String nickColorCode = "#FFFFFF";
+            
             if (!Objects.equals(uid, "anonymous")) {
                 String profile = (String) bdyObject.get("profile");
                 JSONObject profileObject = (JSONObject) jsonParser.parse(profile);
                 nickname = (String) profileObject.get("nickname");
+                
+                // 역할 및 색상 처리
+                String userRoleCode = (String) profileObject.get("userRoleCode");
+                JSONObject streamingProperty = (JSONObject) profileObject.get("streamingProperty");
+                
+                if (userRoleCode != null) {
+                    userRole = switch (userRoleCode) {
+                        case "streaming_chat_manager" -> "매니저";
+                        case "streamer" -> "스트리머";
+                        default -> "시청자";
+                    };
+                }
+                
+                if (streamingProperty != null) {
+                    if (streamingProperty != null) {
+                        Object nicknameColor = streamingProperty.get("nicknameColor");
+                        
+                        if (nicknameColor != null) {
+                            if (nicknameColor instanceof String) {
+                                JSONObject nicknameColorJson = (JSONObject) jsonParser.parse((String) nicknameColor);
+                                nickColorCode = "#" + (String) nicknameColorJson.get("colorCode");
+                            } else if (nicknameColor instanceof JSONObject) {
+                                nickColorCode = "#" + (String) ((JSONObject) nicknameColor).get("colorCode");
+                            }
+                        }
+                    }
+                }
             }
 
-            Logger.debug("[ChzzkWebsocket][" + chzzkUser.get("nickname") + "] " + 
-                        nickname + ": " + message);
+            // 이모티콘 처리
+            String extras = (String) bdyObject.get("extras");
+            JSONObject extraObject = (JSONObject) jsonParser.parse(extras);
+            JSONObject emojis = (JSONObject) extraObject.get("emojis");
+            
+            // 연속된 이모티콘을 하나로 처리하고 이름으로 표시
+            String displayMessage = message;
+            if (emojis != null) {
+                for (Object key : emojis.keySet()) {
+                    String emojiKey = (String) key;
+                    String emojiPattern = "\\{:" + emojiKey + ":\\}+"; // 연속된 동일 이모티콘 패턴
+                    displayMessage = displayMessage.replaceAll(emojiPattern, ":" + emojiKey + ":");
+                }
+            }
+
+            // 채팅 색상 설정
+            ChatColor nickColor = getChatColorFromHex(nickColorCode);
+            
+            // 게임 내 브로드캐스트 - 방송플랫폼, 등급 순서로 표시
+            String gameMessage = ChatColor.GRAY + "[치지직 | " + chzzkUser.get("nickname") + "] " +
+                            nickColor + nickname + ChatColor.WHITE + 
+                            (userRole.equals("일반") ? "" : " (" + userRole + ")") + 
+                            ": " + displayMessage;
+            
+            Bukkit.getScheduler().runTask(DoneConnector.plugin, () -> 
+                Bukkit.broadcastMessage(gameMessage)
+            );
+
+            // 디스코드 브로드캐스트
+            String discordMessage = "[치지직 | " + chzzkUser.get("nickname") + 
+                                (userRole.equals("일반") ? "" : " | " + userRole) + "] " +
+                                nickname + ": " + displayMessage;
+            
+            Bukkit.getScheduler().runTask(DoneConnector.plugin, () -> 
+                Bukkit.dispatchCommand(
+                    Bukkit.getConsoleSender(),
+                    "discord broadcast " + discordMessage
+                )
+            );
 
         } catch (Exception e) {
             Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
                         "] 채팅 메시지 처리 중 오류 발생: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
+    private ChatColor getChatColorFromHex(String hexColor) {
+        try {
+            return switch (hexColor.toUpperCase()) {
+                case "#CC000" -> ChatColor.RED;
+                case "#0000CC" -> ChatColor.BLUE;
+                case "#00CC00" -> ChatColor.GREEN;
+                default -> ChatColor.WHITE;
+            };
+        } catch (Exception e) {
+            return ChatColor.WHITE;
+        }
+    }
+
+    // executeCommand 메소드 개선
     private void executeCommand(String tag, String nickname, int payAmount, 
                               String msg, String command) {
-        String[] commandArray = command.split(";");
+        if (isShuttingDown) {
+            return;  // 종료 중이면 새로운 명령 실행 방지
+        }
 
+        String[] commandArray = command.split(";");
         for (String cmd : commandArray) {
+            if (isShuttingDown) break;  // 실행 중 종료 감지
+
             String finalCommand = cmd
                 .replaceAll("%tag%", tag)
                 .replaceAll("%name%", nickname)
@@ -391,13 +411,25 @@ public class ChzzkWebSocket extends WebSocketClient {
                 .replaceAll("%message%", msg);
 
             try {
-                Bukkit.getScheduler()
-                    .callSyncMethod(DoneConnector.plugin, () -> 
-                        Bukkit.dispatchCommand(
-                            Bukkit.getConsoleSender(), 
-                            finalCommand
-                        )
-                    ).get(COMMAND_EXECUTION_TIMEOUT, TimeUnit.MILLISECONDS);
+                Future<?> task = Bukkit.getScheduler()
+                    .callSyncMethod(DoneConnector.plugin, () -> {
+                        if (!isShuttingDown) {
+                            return Bukkit.dispatchCommand(
+                                Bukkit.getConsoleSender(), 
+                                finalCommand
+                            );
+                        }
+                        return false;
+                    });
+                
+                pendingTasks.add(task);
+                
+                try {
+                    task.get(COMMAND_EXECUTION_TIMEOUT, TimeUnit.MILLISECONDS);
+                } finally {
+                    pendingTasks.remove(task);
+                }
+                
             } catch (TimeoutException e) {
                 Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
                            "] 명령어 실행 시간 초과: " + finalCommand);
@@ -406,6 +438,14 @@ public class ChzzkWebSocket extends WebSocketClient {
                            "] 명령어 실행 중 오류 발생: " + e.getMessage());
             }
         }
+    }
+
+    // handlePing 메소드 수정
+    private void handlePing() {
+        JSONObject pongObject = new JSONObject();
+        pongObject.put("cmd", CHZZK_CHAT_CMD_PONG);
+        pongObject.put("ver", 2);
+        send(pongObject.toJSONString());
     }
 
     private void startPingThread() {
@@ -471,60 +511,81 @@ public class ChzzkWebSocket extends WebSocketClient {
         }
     }
 
+    // shutdown 메소드 개선
     public void shutdown() {
-        isAlive = false;
-        connectionState = ConnectionState.DISCONNECTED;  // 추가 필요
-        
-        if (pingThread != null) {
-            pingThread.interrupt();
-            pingThread = null;
-        }
-        
-        if (messageProcessingThread != null) {
-            messageProcessingThread.interrupt();
-            messageProcessingThread = null;
-        }
-        
-        // 스레드 풀 종료 시 타임아웃 증가 필요
-        try {
-            scheduler.shutdown();
-            if (!scheduler.awaitTermination(10, TimeUnit.SECONDS)) {  // 5초에서 10초로 증가
-                scheduler.shutdownNow();
-                if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                    Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                            "] 스케줄러가 정상적으로 종료되지 않았습니다.");
-                }
+        synchronized (connectionLock) {
+            if (isShuttingDown) {
+                return;  // 이미 종료 중이면 중복 실행 방지
             }
-        } catch (InterruptedException e) {
-            scheduler.shutdownNow();
-            Thread.currentThread().interrupt();
+            isShuttingDown = true;
+            isAlive = false;
+            connectionState = ConnectionState.DISCONNECTED;
+
+            // 1. 실행 중인 모든 태스크 취소
+            for (Future<?> task : pendingTasks) {
+                task.cancel(true);
+            }
+            pendingTasks.clear();
+
+            // 2. 핑 스레드 종료
+            if (pingThread != null) {
+                pingThread.interrupt();
+                try {
+                    pingThread.join(5000);  // 최대 5초 대기
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                pingThread = null;
+            }
+
+            // 3. 스케줄러 종료
+            try {
+                scheduler.shutdown();
+                if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                    scheduler.shutdownNow();
+                    scheduler.awaitTermination(5, TimeUnit.SECONDS);
+                }
+            } catch (InterruptedException e) {
+                scheduler.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+
+            // 4. 웹소켓 연결 종료
+            try {
+                this.close();
+                Thread.sleep(5000); // 5초 대기
+                if (this.isOpen()) {
+                    // 강제 종료
+                    this.closeBlocking();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            // 5. 메트릭 수집기 종료
+            metricsCollector.shutdown();
+            
+            Logger.info("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
+                       "] 웹소켓이 정상적으로 종료되었습니다.");
         }
-        
-        try {
-            this.closeBlocking();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        
-        metricsCollector.shutdown();
     }
 
-    // MetricsCollector 내부 클래스
+    // MetricsCollector 클래스 개선
     private static class MetricsCollector {
         private final String nickname;
         private final Map<String, Object> metrics = new ConcurrentHashMap<>();
+        private volatile boolean isShutdown = false;
         
         public MetricsCollector(String nickname) {
             this.nickname = nickname;
         }
         
-        public void updateMetrics(String connectionState, int reconnectAttempts, 
-                                long messageCount, int queueSize) {
-            metrics.put("connectionState", connectionState);
-            metrics.put("reconnectAttempts", reconnectAttempts);
-            metrics.put("messageCount", messageCount);
-            metrics.put("queueSize", queueSize);
-            metrics.put("lastUpdated", System.currentTimeMillis());
+        public void updateMetrics(String connectionState, int reconnectAttempts) {
+            if (!isShutdown) {
+                metrics.put("connectionState", connectionState);
+                metrics.put("reconnectAttempts", reconnectAttempts);
+                metrics.put("lastUpdated", System.currentTimeMillis());
+            }
         }
         
         public Map<String, Object> getMetrics() {
@@ -532,10 +593,8 @@ public class ChzzkWebSocket extends WebSocketClient {
         }
         
         public void shutdown() {
+            isShutdown = true;
             metrics.clear();
         }
     }
 }
-
-
-
