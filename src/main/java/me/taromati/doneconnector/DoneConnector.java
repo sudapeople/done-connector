@@ -44,6 +44,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
     private final Object soopLock = new Object();
     private volatile boolean chzzkConnecting = false;
     private volatile boolean soopConnecting = false;
+    public static boolean isReloading = false; // reload 여부 변수 추가
 
     private static final List<Map<String, String>> chzzkUserList = new ArrayList<>();
     private static final List<Map<String, String>> soopUserList = new ArrayList<>();
@@ -232,6 +233,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
     }
 
     private void safeReload() {
+        isReloading = true; // reload 시작
         Logger.warn("후원 설정을 다시 불러옵니다.");
         CompletableFuture<Void> reloadFuture = CompletableFuture.runAsync(() -> {
             try {
@@ -242,6 +244,8 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                     Thread.currentThread().interrupt();
                 }
                 throw new CompletionException(e);
+            } finally {
+                isReloading = false; // reload 완료
             }
         });
 

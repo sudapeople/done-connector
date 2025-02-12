@@ -104,22 +104,27 @@ public class ChzzkWebSocket extends WebSocketClient {
 
     private void attemptReconnect() {
         synchronized (connectionLock) {
-            if (connectionState != ConnectionState.DISCONNECTED || 
-                reconnectAttempts.get() >= MAX_RECONNECT_ATTEMPTS) {
+            if (connectionState!= ConnectionState.DISCONNECTED ||
+                    reconnectAttempts.get() >= MAX_RECONNECT_ATTEMPTS) {
+                return;
+            }
+
+            // reload 시에만 재연결 시도
+            if (!DoneConnector.isReloading) {
                 return;
             }
 
             connectionState = ConnectionState.RECONNECTING;
             int attempts = reconnectAttempts.incrementAndGet();
-            
+
             int backoffMs = Math.min(
-                INITIAL_BACKOFF_MS * (1 << attempts),
-                MAX_BACKOFF_MS
+                    INITIAL_BACKOFF_MS * (1 << attempts),
+                    MAX_BACKOFF_MS
             );
-            
-            Logger.info(ChatColor.YELLOW + "[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                       "] 재연결 시도 중... (" + attempts + "/" + MAX_RECONNECT_ATTEMPTS + 
-                       ") 대기 시간: " + backoffMs + "ms");
+
+            Logger.info(ChatColor.YELLOW + "[ChzzkWebsocket][" + chzzkUser.get("nickname") +
+                    "] 재연결 시도 중... (" + attempts + "/" + MAX_RECONNECT_ATTEMPTS +
+                    ") 대기 시간: " + backoffMs + "ms");
 
             scheduler.schedule(() -> {
                 try {
@@ -130,8 +135,8 @@ public class ChzzkWebSocket extends WebSocketClient {
                         attemptReconnect();
                     }
                 } catch (Exception e) {
-                    Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                               "] 재연결 시도 중 오류 발생: " + e.getMessage());
+                    Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") +
+                            "] 재연결 시도 중 오류 발생: " + e.getMessage());
                     connectionState = ConnectionState.DISCONNECTED;
                 }
             }, backoffMs, TimeUnit.MILLISECONDS);
@@ -546,16 +551,16 @@ public class ChzzkWebSocket extends WebSocketClient {
 
     @Override
     public void onError(Exception ex) {
-        Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                    "] 웹소켓 에러 발생: " + ex.getMessage());
-        
+        Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") +
+                "] 웹소켓 에러 발생: " + ex.getMessage());
+
         synchronized (connectionLock) {
             if (connectionState == ConnectionState.CONNECTED) {
                 connectionState = ConnectionState.DISCONNECTED;
-                // 자동 재연결 로직
-                if (isAlive) {
-                    attemptReconnect();
-                }
+            } else if (connectionState == ConnectionState.CONNECTING) {
+                // 첫 번째 연결 시도 실패 시에만 재연결 시도
+                connectionState = ConnectionState.DISCONNECTED;
+                attemptReconnect();
             }
         }
     }
