@@ -5,6 +5,7 @@ import me.taromati.doneconnector.DoneConnector;
 import me.taromati.doneconnector.Logger;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.entity.Player;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 import org.json.simple.JSONArray;
@@ -295,19 +296,29 @@ public class ChzzkWebSocket extends WebSocketClient {
                 return;
             }
 
-            // 프로필 정보 파싱
-            String nickname = "익명";
+            // 채팅 보낸 사람의 프로필 정보 파싱 
+            String senderNickname = "익명";
             String userRole = "일반";
             String nickColorCode = "#FFFFFF";
             
             if (!Objects.equals(uid, "anonymous")) {
-                String profile = (String) bdyObject.get("profile");
-                JSONObject profileObject = (JSONObject) jsonParser.parse(profile);
-                nickname = (String) profileObject.get("nickname");
+                Object profileObj = bdyObject.get("profile");
+                JSONObject profileObject;
+                
+                if (profileObj instanceof String) {
+                    profileObject = (JSONObject) jsonParser.parse((String) profileObj);
+                } else if (profileObj instanceof JSONObject) {
+                    profileObject = (JSONObject) profileObj;
+                } else {
+                    Logger.error("[ChzzkWebsocket] 알 수 없는 프로필 형식: " + profileObj);
+                    return;
+                }
+                
+                senderNickname = (String) profileObject.get("nickname");
                 
                 // 역할 및 색상 처리
                 String userRoleCode = (String) profileObject.get("userRoleCode");
-                JSONObject streamingProperty = (JSONObject) profileObject.get("streamingProperty");
+                Object streamingPropertyObj = profileObject.get("streamingProperty");
                 
                 if (userRoleCode != null) {
                     userRole = switch (userRoleCode) {
@@ -317,65 +328,105 @@ public class ChzzkWebSocket extends WebSocketClient {
                     };
                 }
                 
-                if (streamingProperty != null) {
-                    if (streamingProperty != null) {
-                        Object nicknameColor = streamingProperty.get("nicknameColor");
-                        
-                        if (nicknameColor != null) {
-                            if (nicknameColor instanceof String) {
-                                JSONObject nicknameColorJson = (JSONObject) jsonParser.parse((String) nicknameColor);
-                                nickColorCode = "#" + (String) nicknameColorJson.get("colorCode");
-                            } else if (nicknameColor instanceof JSONObject) {
-                                nickColorCode = "#" + (String) ((JSONObject) nicknameColor).get("colorCode");
-                            }
+                if (streamingPropertyObj != null) {
+                    JSONObject streamingProperty;
+                    if (streamingPropertyObj instanceof String) {
+                        streamingProperty = (JSONObject) jsonParser.parse((String) streamingPropertyObj);
+                    } else {
+                        streamingProperty = (JSONObject) streamingPropertyObj;
+                    }
+                    
+                    Object nicknameColor = streamingProperty.get("nicknameColor");
+                    if (nicknameColor != null) {
+                        if (nicknameColor instanceof String) {
+                            JSONObject nicknameColorJson = (JSONObject) jsonParser.parse((String) nicknameColor);
+                            nickColorCode = "#" + (String) nicknameColorJson.get("colorCode");
+                        } else if (nicknameColor instanceof JSONObject) {
+                            nickColorCode = "#" + (String) ((JSONObject) nicknameColor).get("colorCode");
                         }
                     }
                 }
             }
 
             // 이모티콘 처리
-            String extras = (String) bdyObject.get("extras");
-            JSONObject extraObject = (JSONObject) jsonParser.parse(extras);
-            JSONObject emojis = (JSONObject) extraObject.get("emojis");
-            
-            // 연속된 이모티콘을 하나로 처리하고 이름으로 표시
+            Object extrasObj = bdyObject.get("extras");
             String displayMessage = message;
-            if (emojis != null) {
-                for (Object key : emojis.keySet()) {
-                    String emojiKey = (String) key;
-                    String emojiPattern = "\\{:" + emojiKey + ":\\}+"; // 연속된 동일 이모티콘 패턴
-                    displayMessage = displayMessage.replaceAll(emojiPattern, ":" + emojiKey + ":");
+            
+            if (extrasObj != null) {
+                JSONObject extraObject;
+                if (extrasObj instanceof String) {
+                    extraObject = (JSONObject) jsonParser.parse((String) extrasObj);
+                } else {
+                    extraObject = (JSONObject) extrasObj;
+                }
+                
+                Object emojisObj = extraObject.get("emojis");
+                if (emojisObj instanceof JSONObject) {
+                    JSONObject emojis = (JSONObject) emojisObj;
+                    for (Object key : emojis.keySet()) {
+                        String emojiKey = (String) key;
+                        String emojiPattern = "\\{:" + emojiKey + ":\\}+";
+                        displayMessage = displayMessage.replaceAll(emojiPattern, ":" + emojiKey + ":");
+                    }
                 }
             }
 
-            // 채팅 색상 설정
             ChatColor nickColor = getChatColorFromHex(nickColorCode);
             
-            // 게임 내 브로드캐스트 - 방송플랫폼, 등급 순서로 표시
-            String gameMessage = ChatColor.GRAY + "[치지직 | " + chzzkUser.get("nickname") + "] " +
-                            nickColor + nickname + ChatColor.WHITE + 
-                            (userRole.equals("일반") ? "" : " (" + userRole + ")") + 
-                            ": " + displayMessage;
-            
-            Bukkit.getScheduler().runTask(DoneConnector.plugin, () -> 
-                Bukkit.broadcastMessage(gameMessage)
-            );
+            // config.yml과 매핑된 값 가져오기
+            String streamerNickname = chzzkUser.get("nickname");     // 스트리머 채널명
+            String markNickname = chzzkUser.get("tag");             // 마크닉네임 (마인크래프트 ID)
+            String channelId = chzzkUser.get("id");                 // 채널 식별자
 
-            // 디스코드 브로드캐스트
-            String discordMessage = "[치지직 | " + chzzkUser.get("nickname") + 
-                                (userRole.equals("일반") ? "" : " | " + userRole) + "] " +
-                                nickname + ": " + displayMessage;
-            
-            Bukkit.getScheduler().runTask(DoneConnector.plugin, () -> 
-                Bukkit.dispatchCommand(
-                    Bukkit.getConsoleSender(),
-                    "discord broadcast " + discordMessage
-                )
-            );
+            // 디버그용 정보 출력
+            Logger.debug("[ChzzkWebsocket] 채팅 정보 - 채널ID: " + channelId + 
+                        ", 스트리머: " + streamerNickname + 
+                        ", 마크닉네임: " + markNickname);
+
+            if (markNickname != null) {
+                // 게임 내 채팅 메시지 구성
+                String gameMessage = ChatColor.GRAY + "[치지직 | " + streamerNickname + "] " +
+                                nickColor + senderNickname + ChatColor.WHITE + 
+                                (userRole.equals("일반") ? "" : " (" + userRole + ")") + 
+                                ": " + displayMessage;
+
+                // 온라인 플레이어 중 마크닉네임이 일치하는 플레이어에게 메시지 전송
+                boolean messageDelivered = false;
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    String playerName = player.getName();
+                    
+                    if (playerName.equalsIgnoreCase(markNickname)) {
+                        player.sendMessage(gameMessage);
+                        Logger.debug("[ChzzkWebsocket] 채팅 전송 성공 -> " + markNickname);
+                        messageDelivered = true;
+                        break;
+                    }
+                }
+
+                if (!messageDelivered) {
+                    Logger.debug("[ChzzkWebsocket] 대상 플레이어가 오프라인 상태: " + markNickname);
+                }
+
+                // 디스코드 브로드캐스트
+                String discordMessage = "[치지직 | " + streamerNickname + 
+                                    (userRole.equals("일반") ? "" : " | " + userRole) + "] " +
+                                    senderNickname + ": " + displayMessage;
+                
+                Bukkit.getScheduler().runTask(DoneConnector.plugin, () -> 
+                    Bukkit.dispatchCommand(
+                        Bukkit.getConsoleSender(),
+                        "discord broadcast " + discordMessage
+                    )
+                );
+            } else {
+                Logger.error("[ChzzkWebsocket] 마크닉네임 설정을 찾을 수 없음");
+                Logger.error(" - 채널 식별자: " + channelId);
+                Logger.error(" - 스트리머: " + streamerNickname);
+            }
 
         } catch (Exception e) {
-            Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                        "] 채팅 메시지 처리 중 오류 발생: " + e.getMessage());
+            Logger.error("[ChzzkWebsocket] 채팅 처리 중 오류 발생");
+            Logger.error(" - 메시지: " + e.getMessage());
             e.printStackTrace();
         }
     }
