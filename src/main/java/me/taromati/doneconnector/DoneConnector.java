@@ -13,24 +13,20 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.java_websocket.drafts.Draft_6455;
 import org.java_websocket.protocols.Protocol;
 import org.jetbrains.annotations.NotNull;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.CompletionException;
-
 
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 public final class DoneConnector extends JavaPlugin implements Listener {
@@ -768,6 +764,169 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         } catch (Exception e) {
             Logger.error("사용자 추가 중 오류 발생: " + e.getMessage());
         }
+    }
+
+    private boolean connectChzzkForPlayer(String playerName) {
+        for (Map<String, String> chzzkUser : chzzkUserList) {
+            if (playerName.equalsIgnoreCase(chzzkUser.get("tag"))) {
+                synchronized (chzzkLock) {
+                    boolean alreadyConnected = chzzkWebSocketList.stream()
+                        .anyMatch(ws -> ws.getChzzkUser().get("tag").equalsIgnoreCase(playerName));
+                    
+                    if (!alreadyConnected) {
+                        Logger.info(ChatColor.GREEN + "[자동연결] " + playerName + 
+                                "님의 치지직 채널을 연결합니다.");
+                        boolean success = connectChzzk(chzzkUser);
+                        if (!success) {
+                            // 플레이어에게 방송 중이 아니라는 메시지 전송
+                            Bukkit.getScheduler().runTask(plugin, () -> {
+                                Player player = Bukkit.getPlayer(playerName);
+                                if (player != null && player.isOnline()) {
+                                    player.sendMessage(ChatColor.YELLOW + "[TRMT] 현재 방송 중이 아니어서 치지직 채널에 연결할 수 없습니다.");
+                                }
+                            });
+                        }
+                        return success;
+                    } else {
+                        Logger.debug("[자동연결] " + playerName + 
+                                "님의 치지직 채널은 이미 연결되어 있습니다.");
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 플레이어 접속 시 채널 자동 연결
+     */
+    @EventHandler(priority = EventPriority.NORMAL)
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        if (isReloading) {
+            Logger.debug("[자동연결] 현재 리로딩 중이므로 자동 연결을 건너뜁니다.");
+            return;
+        }
+        
+        Player player = event.getPlayer();
+        String playerName = player.getName();
+        
+        CompletableFuture.runAsync(() -> {
+            try {
+                boolean channelFound = false;
+                
+                // 치지직 채널 연결 시도
+                channelFound |= connectChzzkForPlayer(playerName);
+                
+                // 숲 채널 연결 시도
+                channelFound |= connectSoopForPlayer(playerName);
+                
+                if (channelFound) {
+                    Bukkit.getScheduler().runTask(plugin, () -> 
+                        player.sendMessage(ChatColor.GREEN + "[TRMT] 채널이 자동으로 연결되었습니다.")
+                    );
+                }
+            } catch (Exception e) {
+                Logger.error("[자동연결] " + playerName + "님의 채널 연결 중 오류 발생: " + e.getMessage());
+                e.printStackTrace();
+            }
+        });
+    }
+
+    /**
+     * 플레이어 퇴장 시 채널 자동 해제
+     */
+    @EventHandler(priority = EventPriority.NORMAL)
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        if (isReloading) {
+            Logger.debug("[자동해제] 현재 리로딩 중이므로 자동 해제를 건너뜁니다.");
+            return;
+        }
+
+        Player player = event.getPlayer();
+        String playerName = player.getName();
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                boolean channelFound = false;
+                
+                // 치지직 채널 해제
+                synchronized (chzzkLock) {
+                    List<ChzzkWebSocket> toDisconnect = chzzkWebSocketList.stream()
+                        .filter(ws -> playerName.equalsIgnoreCase(ws.getChzzkUser().get("tag")))
+                        .collect(Collectors.toList());
+                    
+                    if (!toDisconnect.isEmpty()) {
+                        channelFound = true;
+                        for (ChzzkWebSocket webSocket : toDisconnect) {
+                            try {
+                                Logger.info(ChatColor.YELLOW + "[자동해제] " + playerName + 
+                                          "님의 치지직 채널 연결을 해제합니다.");
+                                webSocket.shutdown();
+                                chzzkWebSocketList.remove(webSocket);
+                            } catch (Exception e) {
+                                Logger.error("[자동해제] 치지직 채널 해제 중 오류: " + e.getMessage());
+                            }
+                        }
+                    }
+                }
+                
+                // 숲 채널 해제
+                synchronized (soopLock) {
+                    List<SoopWebSocket> toDisconnect = soopWebSocketList.stream()
+                        .filter(ws -> playerName.equalsIgnoreCase(ws.getSoopUser().get("tag")))
+                        .collect(Collectors.toList());
+                    
+                    if (!toDisconnect.isEmpty()) {
+                        channelFound = true;
+                        for (SoopWebSocket webSocket : toDisconnect) {
+                            try {
+                                Logger.info(ChatColor.YELLOW + "[자동해제] " + playerName + 
+                                          "님의 숲 채널 연결을 해제합니다.");
+                                webSocket.close();
+                                soopWebSocketList.remove(webSocket);
+                            } catch (Exception e) {
+                                Logger.error("[자동해제] 숲 채널 해제 중 오류: " + e.getMessage());
+                            }
+                        }
+                    }
+                }
+                
+                if (channelFound) {
+                    Logger.info(ChatColor.GREEN + "[자동해제] " + playerName + 
+                              "님의 채널 연결이 해제되었습니다.");
+                }
+                
+            } catch (Exception e) {
+                Logger.error("[자동해제] " + playerName + "님의 채널 해제 중 오류 발생: " + e.getMessage());
+                e.printStackTrace();
+            }
+        });
+    }
+
+    /**
+     * 플레이어의 숲 채널 연결 처리
+     */
+    private boolean connectSoopForPlayer(String playerName) {
+        for (Map<String, String> soopUser : soopUserList) {
+            if (playerName.equalsIgnoreCase(soopUser.get("tag"))) {
+                synchronized (soopLock) {
+                    boolean alreadyConnected = soopWebSocketList.stream()
+                        .anyMatch(ws -> ws.getSoopUser().get("tag").equalsIgnoreCase(playerName));
+                    
+                    if (!alreadyConnected) {
+                        Logger.info(ChatColor.GREEN + "[자동연결] " + playerName + 
+                                  "님의 숲 채널을 연결합니다.");
+                        return connectSoop(soopUser);
+                    } else {
+                        Logger.debug("[자동연결] " + playerName + 
+                                   "님의 숲 채널은 이미 연결되어 있습니다.");
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     public List<String> onTabComplete(CommandSender sender, @NotNull Command cmd, @NotNull String label, String[] args) {

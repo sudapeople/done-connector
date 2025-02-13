@@ -18,6 +18,8 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ChzzkWebSocket extends WebSocketClient {
+    @Getter  // Lombok annotation
+    private final Map<String, String> chzzkUser;
     private static final int MAX_RECONNECT_ATTEMPTS = 5;
     private static final int RECONNECT_DELAY_MS = 5000;
     private static final int INITIAL_BACKOFF_MS = 1000;
@@ -29,7 +31,6 @@ public class ChzzkWebSocket extends WebSocketClient {
     private final String accessToken;
     private final String extraToken;
     @Getter
-    private final Map<String, String> chzzkUser;
     private final HashMap<Integer, List<String>> donationRewards;
     private final MetricsCollector metricsCollector;
     
@@ -59,15 +60,15 @@ public class ChzzkWebSocket extends WebSocketClient {
     }
 
     public ChzzkWebSocket(String serverUri, String chatChannelId, String accessToken, 
-                        String extraToken, Map<String, String> chzzkUser,
-                        HashMap<Integer, List<String>> donationRewards,
-                        ScheduledExecutorService sharedScheduler) {
+                         String extraToken, Map<String, String> chzzkUser,
+                         HashMap<Integer, List<String>> donationRewards,
+                         ScheduledExecutorService sharedScheduler) {
         super(URI.create(serverUri));
+        this.chzzkUser = chzzkUser;
         
         this.chatChannelId = chatChannelId;
         this.accessToken = accessToken;
         this.extraToken = extraToken;
-        this.chzzkUser = chzzkUser;
         this.donationRewards = donationRewards;
         
         this.scheduler = sharedScheduler;  // 공유 스케줄러 사용
@@ -163,8 +164,8 @@ public class ChzzkWebSocket extends WebSocketClient {
             connectionState = ConnectionState.CONNECTED;
             reconnectAttempts.set(0);
             
-            Logger.info(ChatColor.GREEN + "[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                       "] 치지직 웹소켓 연결이 성공했습니다.");
+            Logger.info(String.format(ChatColor.GREEN + "[ChzzkWebsocket][%s] 치지직 웹소켓 연결이 성공했습니다.",
+                       chzzkUser.get("nickname")));
             
             sendAuthenticationMessage();
             startPingThread();
@@ -532,17 +533,16 @@ public class ChzzkWebSocket extends WebSocketClient {
     @Override
     public void onClose(int code, String reason, boolean remote) {
         synchronized (connectionLock) {
-            Logger.info(ChatColor.RED + "[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                    "] 웹소켓 연결이 종료되었습니다. (코드: " + code + ", 사유: " + reason + ")");
+            Logger.info(String.format(ChatColor.RED + "[ChzzkWebsocket][%s] 웹소켓 연결이 종료되었습니다. (코드: %d, 사유: %s)",
+                       chzzkUser.get("nickname"), code, reason));
 
             connectionState = ConnectionState.DISCONNECTED;
 
-            if (pingThread!= null) {
+            if (pingThread != null) {
                 pingThread.interrupt();
                 pingThread = null;
             }
 
-            // 자동 재연결 로직 복원
             if (isAlive) {
                 attemptReconnect();
             }
@@ -551,14 +551,13 @@ public class ChzzkWebSocket extends WebSocketClient {
 
     @Override
     public void onError(Exception ex) {
-        Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") +
-                "] 웹소켓 에러 발생: " + ex.getMessage());
+        Logger.error(String.format("[ChzzkWebsocket][%s] 웹소켓 오류 발생: %s",
+                    chzzkUser.get("nickname"), ex.getMessage()));
 
         synchronized (connectionLock) {
             if (connectionState == ConnectionState.CONNECTED) {
                 connectionState = ConnectionState.DISCONNECTED;
             } else if (connectionState == ConnectionState.CONNECTING) {
-                // 첫 번째 연결 시도 실패 시에만 재연결 시도
                 connectionState = ConnectionState.DISCONNECTED;
                 attemptReconnect();
             }
