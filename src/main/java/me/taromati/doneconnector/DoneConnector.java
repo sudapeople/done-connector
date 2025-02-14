@@ -770,6 +770,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         for (Map<String, String> chzzkUser : chzzkUserList) {
             if (playerName.equalsIgnoreCase(chzzkUser.get("tag"))) {
                 synchronized (chzzkLock) {
+                    // 이미 연결된 웹소켓이 있는지 재확인
                     boolean alreadyConnected = chzzkWebSocketList.stream()
                         .anyMatch(ws -> ws.getChzzkUser().get("tag").equalsIgnoreCase(playerName));
                     
@@ -777,12 +778,14 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                         Logger.info(ChatColor.GREEN + "[자동연결] " + playerName + 
                                 "님의 치지직 채널을 연결합니다.");
                         boolean success = connectChzzk(chzzkUser);
+                        
                         if (!success) {
-                            // 플레이어에게 방송 중이 아니라는 메시지 전송
+                            // 실패 시 플레이어에게 알림
                             Bukkit.getScheduler().runTask(plugin, () -> {
                                 Player player = Bukkit.getPlayer(playerName);
                                 if (player != null && player.isOnline()) {
-                                    player.sendMessage(ChatColor.YELLOW + "[TRMT] 현재 방송 중이 아니어서 치지직 채널에 연결할 수 없습니다.");
+                                    player.sendMessage(ChatColor.YELLOW + 
+                                        "[TRMT] 현재 방송 중이 아니어서 치지직 채널에 연결할 수 없습니다.");
                                 }
                             });
                         }
@@ -803,6 +806,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
      */
     @EventHandler(priority = EventPriority.NORMAL)
     public void onPlayerJoin(PlayerJoinEvent event) {
+        // 리로딩 중일 때는 자동 연결 건너뛰기
         if (isReloading) {
             Logger.debug("[자동연결] 현재 리로딩 중이므로 자동 연결을 건너뜁니다.");
             return;
@@ -813,18 +817,28 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         
         CompletableFuture.runAsync(() -> {
             try {
-                boolean channelFound = false;
+                // 이미 연결된 웹소켓이 있는지 확인
+                boolean hasExistingConnection = false;
+                synchronized (chzzkLock) {
+                    hasExistingConnection = chzzkWebSocketList.stream()
+                        .anyMatch(ws -> ws.getChzzkUser().get("tag").equalsIgnoreCase(playerName));
+                }
                 
-                // 치지직 채널 연결 시도
-                channelFound |= connectChzzkForPlayer(playerName);
-                
-                // 숲 채널 연결 시도
-                channelFound |= connectSoopForPlayer(playerName);
-                
-                if (channelFound) {
-                    Bukkit.getScheduler().runTask(plugin, () -> 
-                        player.sendMessage(ChatColor.GREEN + "[TRMT] 채널이 자동으로 연결되었습니다.")
-                    );
+                if (!hasExistingConnection) {
+                    boolean channelFound = false;
+                    
+                    // 치지직 채널 연결 시도
+                    channelFound |= connectChzzkForPlayer(playerName);
+                    
+                    // 숲 채널 연결 시도
+                    channelFound |= connectSoopForPlayer(playerName);
+                    
+                    if (channelFound) {
+                        // 연결 성공 메시지를 메인 스레드에서 전송
+                        Bukkit.getScheduler().runTask(plugin, () -> 
+                            player.sendMessage(ChatColor.GREEN + "[TRMT] 채널이 자동으로 연결되었습니다.")
+                        );
+                    }
                 }
             } catch (Exception e) {
                 Logger.error("[자동연결] " + playerName + "님의 채널 연결 중 오류 발생: " + e.getMessage());
