@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'me.taromati'
-version = '1.9.4'
+version = '1.9.6'
 
 repositories {
     mavenCentral()

@@ -48,12 +48,15 @@ public final class DoneConnector extends JavaPlugin implements Listener {
     List<ChzzkWebSocket> chzzkWebSocketList = new ArrayList<>();
     List<SoopWebSocket> soopWebSocketList = new ArrayList<>();
 
-    private final ScheduledExecutorService sharedScheduler = Executors.newScheduledThreadPool(
-        Runtime.getRuntime().availableProcessors(),
+    // 추가할 필드 선언
+    private final ExecutorService connectionExecutor = Executors.newFixedThreadPool(2);
+
+    // sharedScheduler 수정
+    private final ScheduledExecutorService sharedScheduler = Executors.newScheduledThreadPool(1,
         r -> {
             Thread t = new Thread(r);
             t.setDaemon(true);
-            t.setName("ChzzkWebSocket-Shared-Scheduler");
+            t.setName("WebSocket-Scheduler");
             return t;
         }
     );
@@ -611,6 +614,26 @@ public final class DoneConnector extends JavaPlugin implements Listener {
             String cmd = args[0];
 
             switch (cmd.toLowerCase()) {
+
+                case "add":
+                    if (args.length < 5) {
+                        Logger.error("옵션 누락. /done add <플랫폼> <방송닉> <방송ID> <마크닉>");
+                        return false;
+                    }
+                    handleAddCommand(args);
+                    return true;
+
+                case "list":
+                    Logger.info("=== 치지직 채널 목록 ===");
+                    for (Map<String, String> user : chzzkUserList) {
+                        Logger.info(user.get("nickname") + " (마크닉네임: " + user.get("tag") + ")");
+                    }
+                    Logger.info("=== 숲 채널 목록 ===");
+                    for (Map<String, String> user : soopUserList) {
+                        Logger.info(user.get("nickname") + " (마크닉네임: " + user.get("tag") + ")");
+                    }
+                    return true;
+
                 case "on":
                     Logger.warn("후원 기능을 활성화 합니다.");
                     try {
@@ -632,7 +655,11 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                         return false;
                     }
                     return true;
-                    
+
+                case "connect":
+                    handleConnectCommand(args);
+                    return true;
+
                 case "reconnect":
                     if (args.length < 2) {
                         Logger.warn("all 혹은 스트리머 닉네임을 입력해주세요.");
@@ -653,15 +680,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                         e.printStackTrace();
                         return false;
                     }
-                    
-                case "add":
-                    if (args.length < 5) {
-                        Logger.error("옵션 누락. /done add <플랫폼> <방송닉> <방송ID> <마크닉>");
-                        return false;
-                    }
-                    handleAddCommand(args);
-                    return true;
-                    
+
                 default:
                     return false;
             }
@@ -799,6 +818,66 @@ public final class DoneConnector extends JavaPlugin implements Listener {
             }
         }
         return false;
+    }
+
+    /**
+     * 방송인 플레이어 개별 채널 연결 시도
+     */
+    private void handleConnectCommand(String[] args) {
+        if (args.length < 2) {
+            Logger.warn("채널명을 입력해주세요. 사용법: /done connect <치지직/숲> <닉네임>");
+            return;
+        }
+
+        String platform = args[1];
+        String targetNickname = args.length > 2 ? args[2] : null;
+
+        if (targetNickname == null) {
+            Logger.warn("닉네임을 입력해주세요.");
+            return;
+        }
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                boolean channelFound = false;
+                
+                if ("치지직".equals(platform)) {
+                    for (Map<String, String> user : chzzkUserList) {
+                        if (targetNickname.equalsIgnoreCase(user.get("nickname")) || 
+                            targetNickname.equalsIgnoreCase(user.get("tag"))) {
+                            Logger.info(ChatColor.GREEN + "치지직 채널 [" + user.get("nickname") + "] 연결을 시도합니다...");
+                            if (connectChzzk(user)) {
+                                Logger.info(ChatColor.GREEN + "채널 연결 성공!");
+                                channelFound = true;
+                            }
+                            break;
+                        }
+                    }
+                } else if ("숲".equals(platform)) {
+                    for (Map<String, String> user : soopUserList) {
+                        if (targetNickname.equalsIgnoreCase(user.get("nickname")) || 
+                            targetNickname.equalsIgnoreCase(user.get("tag"))) {
+                            Logger.info(ChatColor.GREEN + "숲 채널 [" + user.get("nickname") + "] 연결을 시도합니다...");
+                            if (connectSoop(user)) {
+                                Logger.info(ChatColor.GREEN + "채널 연결 성공!");
+                                channelFound = true;
+                            }
+                            break;
+                        }
+                    }
+                } else {
+                    Logger.error("알 수 없는 플랫폼입니다. '치지직' 또는 '숲'을 입력해주세요.");
+                    return;
+                }
+
+                if (!channelFound) {
+                    Logger.warn("해당 닉네임의 채널을 찾을 수 없습니다.");
+                }
+                
+            } catch (Exception e) {
+                Logger.error("채널 연결 중 오류 발생: " + e.getMessage());
+            }
+        });
     }
 
     /**
@@ -953,7 +1032,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
 
         if (args.length == 1) {
-            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add"));
+            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list"));
 
             if (args[0].isEmpty()) {
                 return commandList;
@@ -973,6 +1052,22 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                         .filter(name -> name.toLowerCase().startsWith(args[1].toLowerCase()))
                         .toList();
             }
+        }
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("connect")) {
+            return Arrays.asList("치지직", "숲");
+        }
+
+        if (args.length == 3 && args[0].equalsIgnoreCase("connect")) {
+            List<String> nicknames = new ArrayList<>();
+            if ("치지직".equalsIgnoreCase(args[1])) {
+                chzzkUserList.forEach(user -> nicknames.add(user.get("nickname")));
+            } else if ("숲".equalsIgnoreCase(args[1])) {
+                soopUserList.forEach(user -> nicknames.add(user.get("nickname")));
+            }
+            return nicknames.stream()
+                    .filter(name -> name.toLowerCase().startsWith(args[2].toLowerCase()))
+                    .collect(Collectors.toList());
         }
 
         return Collections.emptyList();
