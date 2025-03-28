@@ -1,8 +1,8 @@
-//package me.taromati.doneconnector;
+//package me.suda.doneconnector;
 //
-//import me.taromati.doneconnector.afreecatv.AfreecaTVApi;
-//import me.taromati.doneconnector.afreecatv.AfreecaTVLiveInfo;
-//import me.taromati.doneconnector.afreecatv.AfreecaTVWebSocket;
+//import me.suda.doneconnector.afreecatv.AfreecaTVApi;
+//import me.suda.doneconnector.afreecatv.AfreecaTVLiveInfo;
+//import me.suda.doneconnector.afreecatv.AfreecaTVWebSocket;
 //import org.java_websocket.drafts.Draft_6455;
 //import org.java_websocket.extensions.IExtension;
 //import org.java_websocket.protocols.IProtocol;

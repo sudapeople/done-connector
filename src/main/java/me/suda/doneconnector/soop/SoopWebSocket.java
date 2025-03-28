@@ -1,11 +1,11 @@
-package me.taromati.doneconnector.soop;
+package me.suda.doneconnector.soop;
 
 import lombok.Getter;
-import me.taromati.doneconnector.DoneConnector;
-import me.taromati.doneconnector.Logger;
+import me.suda.doneconnector.DoneConnector;
+import me.suda.doneconnector.Logger;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import me.taromati.doneconnector.SSLUtils;
+import me.suda.doneconnector.SSLUtils;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.drafts.Draft_6455;
 import org.java_websocket.handshake.ServerHandshake;

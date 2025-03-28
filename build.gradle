@@ -2,8 +2,8 @@ plugins {
     id 'java'
 }
 
-group = 'me.taromati'
-version = '1.9.6'
+group = 'me.suda'
+version = '1.9.7'
 
 repositories {
     mavenCentral()

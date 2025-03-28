@@ -1,8 +1,8 @@
-package me.taromati.doneconnector.chzzk;
+package me.suda.doneconnector.chzzk;
 
 import lombok.Getter;
-import me.taromati.doneconnector.DoneConnector;
-import me.taromati.doneconnector.Logger;
+import me.suda.doneconnector.DoneConnector;
+import me.suda.doneconnector.Logger;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;

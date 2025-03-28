@@ -1,12 +1,12 @@
-package me.taromati.doneconnector;
+package me.suda.doneconnector;
 
-import me.taromati.doneconnector.soop.SoopApi;
-import me.taromati.doneconnector.soop.SoopLiveInfo;
-import me.taromati.doneconnector.soop.SoopWebSocket;
-import me.taromati.doneconnector.chzzk.ChzzkApi;
-import me.taromati.doneconnector.chzzk.ChzzkWebSocket;
-import me.taromati.doneconnector.exception.DoneException;
-import me.taromati.doneconnector.exception.ExceptionCode;
+import me.suda.doneconnector.soop.SoopApi;
+import me.suda.doneconnector.soop.SoopLiveInfo;
+import me.suda.doneconnector.soop.SoopWebSocket;
+import me.suda.doneconnector.chzzk.ChzzkApi;
+import me.suda.doneconnector.chzzk.ChzzkWebSocket;
+import me.suda.doneconnector.exception.DoneException;
+import me.suda.doneconnector.exception.ExceptionCode;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;

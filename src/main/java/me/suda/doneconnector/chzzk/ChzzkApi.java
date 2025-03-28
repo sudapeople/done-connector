@@ -1,7 +1,7 @@
-package me.taromati.doneconnector.chzzk;
+package me.suda.doneconnector.chzzk;
 
-import me.taromati.doneconnector.exception.DoneException;
-import me.taromati.doneconnector.exception.ExceptionCode;
+import me.suda.doneconnector.exception.DoneException;
+import me.suda.doneconnector.exception.ExceptionCode;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 

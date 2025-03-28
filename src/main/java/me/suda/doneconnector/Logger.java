@@ -1,4 +1,4 @@
-package me.taromati.doneconnector;
+package me.suda.doneconnector;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;

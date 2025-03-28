@@ -1,4 +1,4 @@
-package me.taromati.doneconnector.soop;
+package me.suda.doneconnector.soop;
 
 public record SoopLiveInfo(
         String CHDOMAIN,

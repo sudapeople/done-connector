@@ -1,4 +1,4 @@
-package me.taromati.doneconnector.exception;
+package me.suda.doneconnector.exception;
 
 import lombok.Getter;
 

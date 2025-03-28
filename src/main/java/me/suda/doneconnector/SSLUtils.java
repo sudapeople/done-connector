@@ -1,4 +1,4 @@
-package me.taromati.doneconnector;
+package me.suda.doneconnector;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;

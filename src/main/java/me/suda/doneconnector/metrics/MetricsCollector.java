@@ -1,4 +1,4 @@
-package me.taromati.doneconnector.metrics;
+package me.suda.doneconnector.metrics;
 
 import java.util.HashMap;
 import java.util.Map;
