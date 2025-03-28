@@ -804,7 +804,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                                 Player player = Bukkit.getPlayer(playerName);
                                 if (player != null && player.isOnline()) {
                                     player.sendMessage(ChatColor.YELLOW + 
-                                        "[TRMT] 현재 방송 중이 아니어서 치지직 채널에 연결할 수 없습니다.");
+                                        "[SUDA] 현재 방송 중이 아니어서 치지직 채널에 연결할 수 없습니다.");
                                 }
                             });
                         }
@@ -915,7 +915,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                     if (channelFound) {
                         // 연결 성공 메시지를 메인 스레드에서 전송
                         Bukkit.getScheduler().runTask(plugin, () -> 
-                            player.sendMessage(ChatColor.GREEN + "[TRMT] 채널이 자동으로 연결되었습니다.")
+                            player.sendMessage(ChatColor.GREEN + "[SUDA] 채널이 자동으로 연결되었습니다.")
                         );
                     }
                 }
