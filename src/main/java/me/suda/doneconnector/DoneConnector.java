@@ -35,6 +35,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
     public static boolean debug;
     public static boolean random;
     public static boolean poong = false;
+    public static boolean autoConnect = false; // 서버 시작 시 자동 연결 여부를 제어하는 플래그 추가
 
     private final Object chzzkLock = new Object();
     private final Object soopLock = new Object();
@@ -61,7 +62,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
     );
 
-    @Override
+@Override
     public void onEnable() {
         plugin = this;
         Bukkit.getPluginManager().registerEvents(this, this);
@@ -70,8 +71,16 @@ public final class DoneConnector extends JavaPlugin implements Listener {
 
         try {
             loadConfig();
-            connectChzzkList();
-            connectSoopList();
+            
+            // 자동 연결 설정이 활성화된 경우에만 서버 시작 시 모든 채널 연결
+            if (autoConnect) {
+                connectChzzkList();
+                connectSoopList();
+                Logger.info(ChatColor.GREEN + "전체 채널 자동 연결 완료.");
+            } else {
+                Logger.info(ChatColor.YELLOW + "자동 연결이 비활성화되어 있습니다. 플레이어 접속 시 개별 채널만 연결됩니다.");
+            }
+            
             Logger.info(ChatColor.GREEN + "플러그인 활성화 완료.");
         } catch (Exception e) {
             Logger.error("플러그인 초기화 중 오류가 발생했습니다: " + e.getMessage());
@@ -98,12 +107,11 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
     }
 
-
-
-    private void clearConfig() {
+private void clearConfig() {
         Logger.debug("설정 초기화 시작...");
         debug = false;
         random = false;
+        autoConnect = false; // 설정 초기화 시 자동 연결 플래그도 초기화
         chzzkUserList.clear();
         soopUserList.clear();
         donationRewards.clear();
@@ -122,6 +130,12 @@ public final class DoneConnector extends JavaPlugin implements Listener {
             if (config.contains("숲풍선갯수로출력")) {
                 poong = config.getBoolean("숲풍선갯수로출력");
             }
+            
+            // config.yml에 "자동연결" 설정이 있으면 해당 값을 읽어옴
+            if (config.contains("자동연결")) {
+                autoConnect = config.getBoolean("자동연결");
+            }
+            
         } catch (Exception e) {
             throw new DoneException(ExceptionCode.CONFIG_LOAD_ERROR);
         }
@@ -231,7 +245,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         Logger.info(ChatColor.GREEN + "후원 보상 목록 " + donationRewards.keySet().size() + "개 로드 완료.");
     }
 
-    private void safeReload() {
+private void safeReload() {
         isReloading = true; // reload 시작
         Logger.warn("후원 설정을 다시 불러옵니다.");
         CompletableFuture<Void> reloadFuture = CompletableFuture.runAsync(() -> {
@@ -318,8 +332,38 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         clearConfig();
         loadConfig();
 
-        // 4. 새로운 연결 시작
-        reconnectAll();
+        // 4. 새로운 연결 시작 (자동 연결 설정이 켜져 있을 때만)
+        if (autoConnect) {
+            reconnectAll();
+        } else {
+            // 자동 연결이 꺼져 있으면 현재 접속 중인 플레이어들의 채널만 다시 연결
+            reconnectOnlinePlayers();
+        }
+    }
+
+    // 현재 접속 중인 플레이어들의 채널만 다시 연결하는 메소드
+    private void reconnectOnlinePlayers() {
+        Logger.info("현재 접속 중인 플레이어들의 채널만 재연결합니다.");
+        
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            String playerName = player.getName();
+            
+            try {
+                boolean connected = false;
+                
+                // 치지직 채널 연결 시도
+                connected |= connectChzzkForPlayer(playerName);
+                
+                // 숲 채널 연결 시도
+                connected |= connectSoopForPlayer(playerName);
+                
+                if (connected) {
+                    player.sendMessage(ChatColor.GREEN + "[SUDA] 설정 리로드 후 채널이 다시 연결되었습니다.");
+                }
+            } catch (Exception e) {
+                Logger.error("[재연결] " + playerName + "님의 채널 연결 중 오류 발생: " + e.getMessage());
+            }
+        }
     }
 
     private void reconnectAll() throws InterruptedException {
@@ -370,7 +414,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
     }
 
-    private void disconnectByNickName(String target) {
+private void disconnectByNickName(String target) {
         chzzkWebSocketList = chzzkWebSocketList.stream()
                 .filter(chzzkWebSocket -> {
                     if (Objects.equals(chzzkWebSocket.getChzzkUser().get("nickname"), target) || Objects.equals(chzzkWebSocket.getChzzkUser().get("tag"), target)) {
@@ -502,7 +546,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
     }
 
-    private boolean connectSoop(Map<String, String> soopUser) {
+private boolean connectSoop(Map<String, String> soopUser) {
         String soopId = soopUser.get("id");
 
         try {
@@ -600,7 +644,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         Logger.debug("숲 웹소켓 연결 종료 완료");
     }
 
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!label.equalsIgnoreCase("done")) {
             return false;
         } else if (!sender.isOp()) {
@@ -681,6 +725,24 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                         return false;
                     }
 
+                // autoconnect 명령어 추가 - 자동 연결 상태 토글
+                case "autoconnect":
+                    autoConnect = !autoConnect;
+                    Logger.info(ChatColor.GREEN + "자동 연결이 " + (autoConnect ? "활성화" : "비활성화") + " 되었습니다.");
+                    
+                    // 설정 파일에도 상태 저장
+                    FileConfiguration config = getConfig();
+                    config.set("자동연결", autoConnect);
+                    saveConfig();
+                    
+                    // 자동 연결 활성화로 전환 시 모든 채널 연결
+                    if (autoConnect) {
+                        Logger.info("모든 채널 연결을 시작합니다...");
+                        connectChzzkList();
+                        connectSoopList();
+                    }
+                    return true;
+
                 default:
                     return false;
             }
@@ -754,7 +816,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
             });
     }
 
-    private void handleAddCommand(String[] args) {
+private void handleAddCommand(String[] args) {
         String platform = args[1];
         String nickname = args[2];
         String id = args[3];
@@ -1032,7 +1094,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
 
         if (args.length == 1) {
-            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list"));
+            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect"));
 
             if (args[0].isEmpty()) {
                 return commandList;
@@ -1073,3 +1135,19 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         return Collections.emptyList();
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
