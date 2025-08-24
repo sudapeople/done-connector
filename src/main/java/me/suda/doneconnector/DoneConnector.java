@@ -743,6 +743,14 @@ public boolean onCommand(CommandSender sender, Command command, String label, St
                     }
                     return true;
 
+                case "test":
+                    if (args.length < 4) {
+                        sender.sendMessage(ChatColor.RED + "사용법: /done test <치지직/숲> <방송채널명> <후원금액>");
+                        return false;
+                    }
+                    handleTestCommand(args, sender);
+                    return true;
+
                 default:
                     return false;
             }
@@ -844,6 +852,138 @@ private void handleAddCommand(String[] args) {
             }
         } catch (Exception e) {
             Logger.error("사용자 추가 중 오류 발생: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 후원 테스트 명령어 처리
+     */
+    private void handleTestCommand(String[] args, CommandSender sender) {
+        String platform = args[1];
+        String channelName = args[2];
+        String amountStr = args[3];
+        
+        // 후원금액 파싱
+        int amount;
+        try {
+            amount = Integer.parseInt(amountStr);
+        } catch (NumberFormatException e) {
+            sender.sendMessage(ChatColor.RED + "후원금액은 숫자로 입력해주세요.");
+            return;
+        }
+        
+        // 플랫폼별 테스트 메시지 생성 및 후원 처리
+        String testMessage;
+        switch (platform.toLowerCase()) {
+            case "치지직":
+                testMessage = ChatColor.GREEN + "[치지직 테스트] " + 
+                             ChatColor.WHITE + channelName + "님이 " + 
+                             ChatColor.GOLD + amount + "원" + 
+                             ChatColor.WHITE + "을 후원했습니다!";
+                
+                // 실제 후원 처리 로직 호출
+                processTestDonation(channelName, amount, "", "치지직");
+                break;
+                
+            case "숲":
+                testMessage = ChatColor.BLUE + "[숲 테스트] " + 
+                             ChatColor.WHITE + channelName + "님이 " + 
+                             ChatColor.GOLD + amount + "원" + 
+                             ChatColor.WHITE + "을 후원했습니다!";
+                
+                // 실제 후원 처리 로직 호출
+                processTestDonation(channelName, amount, "", "숲");
+                break;
+                
+            default:
+                sender.sendMessage(ChatColor.RED + "지원하지 않는 플랫폼입니다. '치지직' 또는 '숲'을 입력해주세요.");
+                return;
+        }
+        
+        // 전체 서버에 테스트 메시지 전송
+        Bukkit.broadcastMessage(testMessage);
+        sender.sendMessage(ChatColor.GREEN + "후원 테스트가 완료되었습니다.");
+        
+        // 로그에도 기록
+        Logger.info("후원 테스트 실행: " + platform + " - " + channelName + " - " + amount + "원");
+    }
+
+    /**
+     * 테스트 후원 처리 - 기존 후원 로직과 동일하게 작동
+     */
+    private void processTestDonation(String nickname, int amount, String message, String platform) {
+        // 기존 후원 처리와 동일한 로직
+        Logger.info(ChatColor.YELLOW + nickname + ChatColor.WHITE + "님께서 " + 
+                ChatColor.GREEN + amount + "원" + ChatColor.WHITE + "을 후원해주셨습니다.");
+        
+        // 후원 보상 명령어 가져오기
+        List<String> commands = donationRewards.get(amount);
+        if (commands == null) {
+            commands = donationRewards.get(0);
+        }
+        
+        if (commands == null || commands.isEmpty()) {
+            Logger.warn("후원 보상 명령어가 설정되지 않았습니다.");
+            return;
+        }
+        
+        // 플랫폼에 따른 태그 찾기
+        String tag = findTagByNickname(nickname, platform);
+        if (tag == null) {
+            tag = nickname; // 태그를 찾을 수 없으면 닉네임 사용
+        }
+        
+        // 명령어 실행
+        if (random) {
+            String command = commands.get(new Random().nextInt(commands.size()));
+            executeTestCommand(tag, nickname, amount, message, command);
+        } else {
+            for (String command : commands) {
+                executeTestCommand(tag, nickname, amount, message, command);
+            }
+        }
+    }
+    
+    /**
+     * 플랫폼과 닉네임으로 태그 찾기
+     */
+    private String findTagByNickname(String nickname, String platform) {
+        if ("치지직".equalsIgnoreCase(platform)) {
+            for (Map<String, String> user : chzzkUserList) {
+                if (nickname.equalsIgnoreCase(user.get("nickname"))) {
+                    return user.get("tag");
+                }
+            }
+        } else if ("숲".equalsIgnoreCase(platform)) {
+            for (Map<String, String> user : soopUserList) {
+                if (nickname.equalsIgnoreCase(user.get("nickname"))) {
+                    return user.get("tag");
+                }
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * 테스트 후원 명령어 실행
+     */
+    private void executeTestCommand(String tag, String nickname, int amount, String message, String command) {
+        String[] commandArray = command.split(";");
+        for (String cmd : commandArray) {
+            String finalCommand = cmd
+                .replace("%tag%", tag)
+                .replace("%name%", nickname)
+                .replace("%amount%", String.valueOf(amount))
+                .replace("%message%", message);
+
+            try {
+                // 비동기로 명령어 실행 (기존 후원 처리와 동일한 방식)
+                Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                    return Bukkit.dispatchCommand(Bukkit.getConsoleSender(), finalCommand);
+                });
+            } catch (Exception e) {
+                Logger.error("테스트 후원 명령어 실행 중 오류: " + e.getMessage());
+            }
         }
     }
 
@@ -1094,7 +1234,7 @@ private void handleAddCommand(String[] args) {
         }
 
         if (args.length == 1) {
-            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect"));
+            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect", "test"));
 
             if (args[0].isEmpty()) {
                 return commandList;
@@ -1120,6 +1260,10 @@ private void handleAddCommand(String[] args) {
             return Arrays.asList("치지직", "숲");
         }
 
+        if (args.length == 2 && args[0].equalsIgnoreCase("test")) {
+            return Arrays.asList("치지직", "숲");
+        }
+
         if (args.length == 3 && args[0].equalsIgnoreCase("connect")) {
             List<String> nicknames = new ArrayList<>();
             if ("치지직".equalsIgnoreCase(args[1])) {
@@ -1130,6 +1274,29 @@ private void handleAddCommand(String[] args) {
             return nicknames.stream()
                     .filter(name -> name.toLowerCase().startsWith(args[2].toLowerCase()))
                     .collect(Collectors.toList());
+        }
+
+        if (args.length == 3 && args[0].equalsIgnoreCase("test")) {
+            List<String> nicknames = new ArrayList<>();
+            if ("치지직".equalsIgnoreCase(args[1])) {
+                chzzkUserList.forEach(user -> nicknames.add(user.get("nickname")));
+            } else if ("숲".equalsIgnoreCase(args[1])) {
+                soopUserList.forEach(user -> nicknames.add(user.get("nickname")));
+            }
+            return nicknames.stream()
+                    .filter(name -> name.toLowerCase().startsWith(args[2].toLowerCase()))
+                    .collect(Collectors.toList());
+        }
+
+        if (args.length == 4 && args[0].equalsIgnoreCase("test")) {
+            List<String> amounts = Arrays.asList("1000", "3000", "5000", "10000", "50000", "100000");
+            if (args[3].isEmpty()) {
+                return amounts;
+            } else {
+                return amounts.stream()
+                        .filter(amount -> amount.startsWith(args[3]))
+                        .collect(Collectors.toList());
+            }
         }
 
         return Collections.emptyList();

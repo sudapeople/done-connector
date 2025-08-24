@@ -13,7 +13,7 @@ Java 버전: 21 이상, 17
 
 ## **실행 방법**
 
-1. plugins 폴더에 done-connector-1.9.8.jar 파일을 넣고 마인크래프트 서버를 1회 실행 후 종료
+1. plugins 폴더에 done-connector-1.9.9.jar 파일을 넣고 마인크래프트 서버를 1회 실행 후 종료
 2. plugins 폴더에서 done-connector/config.yml 파일 수정
 3. 마인크래프트 서버 실행
 
@@ -25,7 +25,7 @@ Java 버전: 21 이상, 17
 * 자동연결 설정이 true면 서버 시작 시 모든 채널 자동 연결
 
 ### 명령어
-* `/done [on|off|connect|reconnect|reload|add|list|autoconnect]` 명령어로 기능 제어
+* `/done [on|off|connect|reconnect|reload|add|list|autoconnect|test]` 명령어로 기능 제어
 * `/done on` 후원자 연동 기능 활성화 (모든 채널 연결)
 * `/done off` 후원자 연동 기능 비활성화 (모든 채널 연결 해제)
 * `/done connect <플랫폼> <닉네임>` 특정 플랫폼의 특정 채널에 수동으로 연결. 플랫폼은 '치지직' 또는 '숲'
@@ -35,6 +35,7 @@ Java 버전: 21 이상, 17
 * `/done add <플랫폼> <방송닉> <방송ID> <마크닉>` 도네연결 임시 추가, reload가 어려운 상황에서 임시로 연결 추가. 서버 재기동시에 없어짐
 * `/done list` 현재 설정된 채널 목록 확인
 * `/done autoconnect` 자동 연결 기능 토글 (활성화/비활성화)
+* `/done test <치지직/숲> <방송채널명> <후원금액>` 후원 테스트 실행. 방송채널명은 config.yml에 설정된 채널명을 사용하며, 후원금액은 자유롭게 입력 가능 (자동완성 지원: 1000, 3000, 5000, 10000, 50000, 100000)
 
 ## **자동연결 설정**
 
