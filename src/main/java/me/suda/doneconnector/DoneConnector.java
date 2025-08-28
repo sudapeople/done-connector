@@ -12,6 +12,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -28,6 +29,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.io.File;
 
 public final class DoneConnector extends JavaPlugin implements Listener {
     public static Plugin plugin;
@@ -107,7 +109,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
     }
 
-private void clearConfig() {
+    private void clearConfig() {
         Logger.debug("설정 초기화 시작...");
         debug = false;
         random = false;
@@ -115,14 +117,19 @@ private void clearConfig() {
         chzzkUserList.clear();
         soopUserList.clear();
         donationRewards.clear();
-        reloadConfig();
+        // reloadConfig() 제거 - loadConfig()에서 직접 파일을 읽음
         Logger.debug("설정 초기화 완료");
     }
 
     private void loadConfig() throws DoneException {
-        this.saveResource("config.yml", false);
+        // 파일 시스템의 config.yml을 직접 읽기
+        File configFile = new File(getDataFolder(), "config.yml");
+        if (!configFile.exists()) {
+            this.saveResource("config.yml", false);
+        }
         
-        FileConfiguration config = this.getConfig();
+        // YamlConfiguration을 사용하여 파일을 직접 읽기
+        FileConfiguration config = YamlConfiguration.loadConfiguration(configFile);
 
         try {
             debug = config.getBoolean("디버그");
@@ -174,11 +181,11 @@ private void clearConfig() {
         try {
             Logger.debug("숲 아이디 로드 중...");
             Set<String> nicknameList = new HashSet<>();
-            if (this.getConfig().getConfigurationSection("숲") != null) {
-                nicknameList.addAll(this.getConfig().getConfigurationSection("숲").getKeys(false));
+            if (config.getConfigurationSection("숲") != null) {
+                nicknameList.addAll(config.getConfigurationSection("숲").getKeys(false));
             }
-            if (this.getConfig().getConfigurationSection("아프리카") != null) {
-                nicknameList.addAll(this.getConfig().getConfigurationSection("아프리카").getKeys(false));
+            if (config.getConfigurationSection("아프리카") != null) {
+                nicknameList.addAll(config.getConfigurationSection("아프리카").getKeys(false));
             }
             Logger.debug(nicknameList.toString());
 
@@ -232,7 +239,7 @@ private void clearConfig() {
 
         try {
             for (String price : Objects.requireNonNull(config.getConfigurationSection("후원 보상")).getKeys(false)) {
-                donationRewards.put(Integer.valueOf(price), this.getConfig().getStringList("후원 보상." + price));
+                donationRewards.put(Integer.valueOf(price), config.getStringList("후원 보상." + price));
             }
         } catch (Exception e) {
             throw new DoneException(ExceptionCode.REWARD_PARSE_ERROR);
