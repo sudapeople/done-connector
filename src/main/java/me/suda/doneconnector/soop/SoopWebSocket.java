@@ -186,6 +186,12 @@ public class SoopWebSocket extends WebSocketClient {
     private void handleDone(String nickname, int payAmount, String msg) {
         Logger.info(ChatColor.YELLOW + nickname + ChatColor.WHITE + "님께서 " + ChatColor.GREEN + payAmount + "원" + ChatColor.WHITE + "을 후원해주셨습니다.");
 
+        // 플레이어 데이터 저장 (실제 후원으로 구분)
+        String streamerUuid = DoneConnector.plugin.getPlayerUuid(soopUser.get("tag"));
+        if (streamerUuid != null) {
+            DoneConnector.plugin.savePlayerData(streamerUuid, soopUser.get("tag"), nickname, payAmount, msg, "숲", false);
+        }
+
         List<String> commands = null;
         if (donationRewards.containsKey(payAmount)) {
             commands = donationRewards.get(payAmount);

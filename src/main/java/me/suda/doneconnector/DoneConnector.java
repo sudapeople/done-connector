@@ -30,6 +30,9 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.io.File;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 public final class DoneConnector extends JavaPlugin implements Listener {
     public static Plugin plugin;
@@ -64,7 +67,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
     );
 
-@Override
+    @Override
     public void onEnable() {
         plugin = this;
         Bukkit.getPluginManager().registerEvents(this, this);
@@ -72,6 +75,9 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         Objects.requireNonNull(this.getCommand("done")).setTabCompleter(this);
 
         try {
+            // data 디렉토리 생성
+            createDataDirectory();
+            
             loadConfig();
             
             // 자동 연결 설정이 활성화된 경우에만 서버 시작 시 모든 채널 연결
@@ -106,6 +112,23 @@ public final class DoneConnector extends JavaPlugin implements Listener {
             Logger.info(ChatColor.GREEN + "플러그인 비활성화 완료.");
         } catch (Exception e) {
             Logger.error("플러그인 종료 중 오류 발생: " + e.getMessage());
+        }
+    }
+
+    /**
+     * data 디렉토리 생성
+     */
+    private void createDataDirectory() {
+        File dataDir = new File(getDataFolder(), "data");
+        if (!dataDir.exists()) {
+            boolean created = dataDir.mkdirs();
+            if (created) {
+                Logger.info(ChatColor.GREEN + "플레이어 데이터 디렉토리가 생성되었습니다: " + dataDir.getAbsolutePath());
+            } else {
+                Logger.warn("플레이어 데이터 디렉토리 생성에 실패했습니다.");
+            }
+        } else {
+            Logger.debug("플레이어 데이터 디렉토리가 이미 존재합니다.");
         }
     }
 
@@ -758,6 +781,14 @@ public boolean onCommand(CommandSender sender, Command command, String label, St
                     handleTestCommand(args, sender);
                     return true;
 
+                case "ranking":
+                    if (args.length < 2) {
+                        sender.sendMessage(ChatColor.RED + "사용법: /done ranking <스트리머 플레이어> [페이지]");
+                        return false;
+                    }
+                    handleRankingCommand(args, sender);
+                    return true;
+
                 default:
                     return false;
             }
@@ -923,6 +954,18 @@ private void handleAddCommand(String[] args) {
         Logger.info(ChatColor.YELLOW + nickname + ChatColor.WHITE + "님께서 " + 
                 ChatColor.GREEN + amount + "원" + ChatColor.WHITE + "을 후원해주셨습니다.");
         
+        // 플랫폼에 따른 태그 찾기
+        String tag = findTagByNickname(nickname, platform);
+        if (tag == null) {
+            tag = nickname; // 태그를 찾을 수 없으면 닉네임 사용
+        }
+        
+        // 플레이어 데이터 저장 (테스트 후원으로 구분)
+        String streamerUuid = getPlayerUuid(tag);
+        if (streamerUuid != null) {
+            savePlayerData(streamerUuid, tag, nickname, amount, message, platform, true);
+        }
+        
         // 후원 보상 명령어 가져오기
         List<String> commands = donationRewards.get(amount);
         if (commands == null) {
@@ -932,12 +975,6 @@ private void handleAddCommand(String[] args) {
         if (commands == null || commands.isEmpty()) {
             Logger.warn("후원 보상 명령어가 설정되지 않았습니다.");
             return;
-        }
-        
-        // 플랫폼에 따른 태그 찾기
-        String tag = findTagByNickname(nickname, platform);
-        if (tag == null) {
-            tag = nickname; // 태그를 찾을 수 없으면 닉네임 사용
         }
         
         // 명령어 실행
@@ -992,6 +1029,96 @@ private void handleAddCommand(String[] args) {
                 Logger.error("테스트 후원 명령어 실행 중 오류: " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * 랭킹 명령어 처리
+     */
+    private void handleRankingCommand(String[] args, CommandSender sender) {
+        String playerName = args[1];
+        int page = 1; // 기본 페이지는 1
+        
+        // 페이지 번호 파싱
+        if (args.length > 2) {
+            try {
+                page = Integer.parseInt(args[2]);
+                if (page < 1) {
+                    sender.sendMessage(ChatColor.RED + "페이지 번호는 1 이상이어야 합니다.");
+                    return;
+                }
+            } catch (NumberFormatException e) {
+                sender.sendMessage(ChatColor.RED + "페이지 번호는 숫자로 입력해주세요.");
+                return;
+            }
+        }
+        
+        // 플레이어 UUID 찾기
+        String streamerUuid = getPlayerUuid(playerName);
+        if (streamerUuid == null) {
+            sender.sendMessage(ChatColor.RED + "플레이어 '" + playerName + "'를 찾을 수 없습니다. 서버에 접속한 적이 있는지 확인해주세요.");
+            return;
+        }
+        
+        // 랭킹 데이터 조회 (테스트 후원 제외)
+        List<Map<String, Object>> ranking = getDonationRanking(streamerUuid, false);
+        
+        if (ranking.isEmpty()) {
+            sender.sendMessage(ChatColor.YELLOW + playerName + "님의 후원 데이터가 없습니다.");
+            return;
+        }
+        
+        // 페이지네이션 처리
+        int itemsPerPage = 10;
+        int totalPages = (ranking.size() + itemsPerPage - 1) / itemsPerPage;
+        
+        if (page > totalPages) {
+            sender.sendMessage(ChatColor.RED + "요청한 페이지(" + page + ")가 존재하지 않습니다. 총 " + totalPages + "페이지입니다.");
+            return;
+        }
+        
+        int startIndex = (page - 1) * itemsPerPage;
+        int endIndex = Math.min(startIndex + itemsPerPage, ranking.size());
+        
+        // 랭킹 출력
+        sender.sendMessage(ChatColor.GOLD + "=== " + playerName + "님의 후원 랭킹 (페이지 " + page + "/" + totalPages + ") ===");
+        
+        for (int i = startIndex; i < endIndex; i++) {
+            Map<String, Object> donor = ranking.get(i);
+            String donorName = (String) donor.get("donor_name");
+            int totalAmount = (int) donor.get("total_amount");
+            int totalCount = (int) donor.get("total_count");
+            int rank = i + 1;
+            
+            String rankColor = getRankColor(rank);
+            String amountFormatted = formatAmount(totalAmount);
+            
+            sender.sendMessage(rankColor + rank + "위. " + ChatColor.WHITE + donorName + 
+                             ChatColor.GRAY + " - " + ChatColor.GREEN + amountFormatted + "원" + 
+                             ChatColor.GRAY + " (" + totalCount + "회)");
+        }
+        
+        if (page < totalPages) {
+            sender.sendMessage(ChatColor.GRAY + "다음 페이지: /done ranking " + playerName + " " + (page + 1));
+        }
+    }
+    
+    /**
+     * 순위에 따른 색상 반환
+     */
+    private String getRankColor(int rank) {
+        switch (rank) {
+            case 1: return ChatColor.GOLD + ""; // 금색
+            case 2: return ChatColor.GRAY + ""; // 은색
+            case 3: return ChatColor.YELLOW + ""; // 동색
+            default: return ChatColor.WHITE + ""; // 흰색
+        }
+    }
+    
+    /**
+     * 금액 포맷팅 (천 단위 콤마)
+     */
+    private String formatAmount(int amount) {
+        return String.format("%,d", amount);
     }
 
     private boolean connectChzzkForPlayer(String playerName) {
@@ -1241,7 +1368,7 @@ private void handleAddCommand(String[] args) {
         }
 
         if (args.length == 1) {
-            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect", "test"));
+            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect", "test", "ranking"));
 
             if (args[0].isEmpty()) {
                 return commandList;
@@ -1306,7 +1433,225 @@ private void handleAddCommand(String[] args) {
             }
         }
 
+        if (args.length == 2 && args[0].equalsIgnoreCase("ranking")) {
+            if (args[1].isEmpty()) {
+                return Bukkit.getOnlinePlayers().stream()
+                        .map(Player::getName)
+                        .collect(Collectors.toList());
+            } else {
+                return Bukkit.getOnlinePlayers().stream()
+                        .map(Player::getName)
+                        .filter(name -> name.toLowerCase().startsWith(args[1].toLowerCase()))
+                        .collect(Collectors.toList());
+            }
+        }
+
+        if (args.length == 3 && args[0].equalsIgnoreCase("ranking")) {
+            List<String> pageNumbers = new ArrayList<>();
+            for (int i = 1; i <= 10; i++) {
+                pageNumbers.add(String.valueOf(i));
+            }
+            if (args[2].isEmpty()) {
+                return pageNumbers;
+            } else {
+                return pageNumbers.stream()
+                        .filter(page -> page.startsWith(args[2]))
+                        .collect(Collectors.toList());
+            }
+        }
+
         return Collections.emptyList();
+    }
+
+    /**
+     * 플레이어 데이터 저장
+     */
+    public void savePlayerData(String streamerUuid, String streamerName, String donorName, int amount, String message, String platform, boolean isTest) {
+        try {
+            // 입력값 검증
+            if (streamerUuid == null || streamerUuid.trim().isEmpty()) {
+                Logger.warn("스트리머 UUID가 유효하지 않습니다: " + streamerUuid);
+                return;
+            }
+            
+            if (streamerName == null || streamerName.trim().isEmpty()) {
+                Logger.warn("스트리머 이름이 유효하지 않습니다: " + streamerName);
+                return;
+            }
+            
+            if (donorName == null || donorName.trim().isEmpty()) {
+                Logger.warn("후원자 이름이 유효하지 않습니다: " + donorName);
+                return;
+            }
+            
+            if (amount <= 0) {
+                Logger.warn("후원 금액이 유효하지 않습니다: " + amount);
+                return;
+            }
+            
+            File dataDir = new File(getDataFolder(), "data");
+            if (!dataDir.exists()) {
+                boolean created = dataDir.mkdirs();
+                if (!created) {
+                    Logger.error("데이터 디렉토리 생성에 실패했습니다: " + dataDir.getAbsolutePath());
+                    return;
+                }
+            }
+
+            File playerFile = new File(dataDir, streamerUuid + ".yml");
+            FileConfiguration playerConfig = YamlConfiguration.loadConfiguration(playerFile);
+
+            // 플레이어 기본 정보 저장 (최초 1회만)
+            if (!playerConfig.contains("streamer_name")) {
+                playerConfig.set("streamer_name", streamerName);
+                playerConfig.set("streamer_uuid", streamerUuid);
+                playerConfig.set("created_at", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+            }
+
+            // 후원 데이터 저장
+            List<Map<String, Object>> donations = new ArrayList<>();
+            if (playerConfig.contains("donations")) {
+                Object donationsObj = playerConfig.get("donations");
+                if (donationsObj instanceof List) {
+                    donations = (List<Map<String, Object>>) donationsObj;
+                }
+            }
+
+            Map<String, Object> donation = new HashMap<>();
+            donation.put("donor_name", donorName);
+            donation.put("amount", amount);
+            donation.put("message", message != null ? message : "");
+            donation.put("platform", platform);
+            donation.put("is_test", isTest);
+            donation.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+
+            donations.add(donation);
+            playerConfig.set("donations", donations);
+
+            // 통계 업데이트
+            updatePlayerStats(playerConfig, amount, isTest);
+
+            playerConfig.save(playerFile);
+            Logger.debug("플레이어 데이터 저장 완료: " + streamerName + " - " + donorName + " - " + amount + "원");
+
+        } catch (Exception e) {
+            Logger.error("플레이어 데이터 저장 중 오류 발생: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 플레이어 통계 업데이트
+     */
+    private void updatePlayerStats(FileConfiguration config, int amount, boolean isTest) {
+        String statsKey = isTest ? "test_stats" : "real_stats";
+        
+        Map<String, Object> stats = new HashMap<>();
+        if (config.contains(statsKey)) {
+            stats = (Map<String, Object>) config.getConfigurationSection(statsKey).getValues(false);
+        }
+
+        int totalDonations = (int) stats.getOrDefault("total_donations", 0);
+        int totalAmount = (int) stats.getOrDefault("total_amount", 0);
+
+        stats.put("total_donations", totalDonations + 1);
+        stats.put("total_amount", totalAmount + amount);
+        stats.put("last_updated", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+
+        config.set(statsKey, stats);
+    }
+
+    /**
+     * 플레이어 UUID 찾기 (온라인/오프라인 모두 지원)
+     */
+    public String getPlayerUuid(String playerName) {
+        // 먼저 온라인 플레이어에서 찾기
+        Player player = Bukkit.getPlayer(playerName);
+        if (player != null) {
+            return player.getUniqueId().toString();
+        }
+        
+        // 오프라인 플레이어에서 찾기
+        try {
+            // Bukkit.getOfflinePlayer()를 사용하여 오프라인 플레이어도 조회 가능
+            org.bukkit.OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(playerName);
+            if (offlinePlayer.hasPlayedBefore()) {
+                return offlinePlayer.getUniqueId().toString();
+            }
+        } catch (Exception e) {
+            Logger.debug("오프라인 플레이어 조회 중 오류: " + e.getMessage());
+        }
+        
+        return null;
+    }
+
+    /**
+     * 플레이어 데이터 로드
+     */
+    public FileConfiguration loadPlayerData(String streamerUuid) {
+        try {
+            File dataDir = new File(getDataFolder(), "data");
+            File playerFile = new File(dataDir, streamerUuid + ".yml");
+            
+            if (!playerFile.exists()) {
+                return null;
+            }
+            
+            return YamlConfiguration.loadConfiguration(playerFile);
+        } catch (Exception e) {
+            Logger.error("플레이어 데이터 로드 중 오류 발생: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 후원 랭킹 조회
+     */
+    public List<Map<String, Object>> getDonationRanking(String streamerUuid, boolean includeTest) {
+        FileConfiguration playerData = loadPlayerData(streamerUuid);
+        if (playerData == null) {
+            return new ArrayList<>();
+        }
+
+        List<Map<String, Object>> donations = (List<Map<String, Object>>) playerData.getList("donations");
+        if (donations == null || donations.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        // 테스트 후원 포함 여부에 따라 필터링
+        if (!includeTest) {
+            donations = donations.stream()
+                .filter(donation -> !(Boolean) donation.get("is_test"))
+                .collect(Collectors.toList());
+        }
+
+        // 후원자별로 그룹화하고 총 후원금액 계산
+        Map<String, Map<String, Object>> donorStats = new HashMap<>();
+        
+        for (Map<String, Object> donation : donations) {
+            String donorName = (String) donation.get("donor_name");
+            int amount = (int) donation.get("amount");
+            
+            if (donorStats.containsKey(donorName)) {
+                Map<String, Object> stats = donorStats.get(donorName);
+                int totalAmount = (int) stats.get("total_amount");
+                int totalCount = (int) stats.get("total_count");
+                
+                stats.put("total_amount", totalAmount + amount);
+                stats.put("total_count", totalCount + 1);
+            } else {
+                Map<String, Object> stats = new HashMap<>();
+                stats.put("donor_name", donorName);
+                stats.put("total_amount", amount);
+                stats.put("total_count", 1);
+                donorStats.put(donorName, stats);
+            }
+        }
+
+        // 총 후원금액 순으로 정렬
+        return donorStats.values().stream()
+            .sorted((a, b) -> Integer.compare((int) b.get("total_amount"), (int) a.get("total_amount")))
+            .collect(Collectors.toList());
     }
 }
 

@@ -227,6 +227,12 @@ public class ChzzkWebSocket extends WebSocketClient {
             Logger.info(ChatColor.YELLOW + nickname + ChatColor.WHITE + "님께서 " + 
                     ChatColor.GREEN + payAmount + "원" + ChatColor.WHITE + "을 후원해주셨습니다.");
             
+            // 플레이어 데이터 저장 (실제 후원으로 구분)
+            String streamerUuid = DoneConnector.plugin.getPlayerUuid(chzzkUser.get("tag"));
+            if (streamerUuid != null) {
+                DoneConnector.plugin.savePlayerData(streamerUuid, chzzkUser.get("tag"), nickname, payAmount, msg, "치지직", false);
+            }
+            
             if (DoneConnector.random) {
                 String command = commands.get(random.nextInt(commands.size()));
                 executeCommand(chzzkUser.get("tag"), nickname, payAmount, msg, command);
