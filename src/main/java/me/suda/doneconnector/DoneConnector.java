@@ -35,7 +35,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 public final class DoneConnector extends JavaPlugin implements Listener {
-    public static Plugin plugin;
+    public static DoneConnector plugin;
 
     public static boolean debug;
     public static boolean random;
