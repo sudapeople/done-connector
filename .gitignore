@@ -210,3 +210,54 @@ gradle-app.setting
 *.hprof
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,windows,linux,intellij+all,visualstudiocode,gradle
+
+# Project specific
+.sudaprompt
+
+# Build artifacts and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# IDE and editor files
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Gradle wrapper (keep gradle-wrapper.jar and gradle-wrapper.properties)
+gradlew
+gradlew.bat
+
+# Local development files
+local.properties
+*.local
+
+# Test and debug files
+test-results/
+debug.log
+error.log
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Archive files
+*.zip
+*.tar.gz
+*.rar
+*.7z
