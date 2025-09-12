@@ -239,8 +239,7 @@ ehthumbs.db
 Thumbs.db
 
 # Gradle wrapper (keep gradle-wrapper.jar and gradle-wrapper.properties)
-gradlew
-gradlew.bat
+# gradlew and gradlew.bat are already removed from tracking
 
 # Local development files
 local.properties
