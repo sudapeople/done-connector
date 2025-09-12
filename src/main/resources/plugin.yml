@@ -1,5 +1,5 @@
 name: done-connector
-version: '1.10.0'
+version: '1.10.1'
 main: me.suda.doneconnector.DoneConnector
 api-version: '1.18'
 commands:
