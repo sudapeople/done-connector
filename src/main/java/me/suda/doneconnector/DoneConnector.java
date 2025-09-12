@@ -791,7 +791,7 @@ public boolean onCommand(CommandSender sender, Command command, String label, St
 
                 case "stats":
                     if (args.length < 2) {
-                        sender.sendMessage(ChatColor.RED + "사용법: /done stats <스트리머 플레이어> [페이지]");
+                        sender.sendMessage(ChatColor.RED + "사용법: /done stats <스트리머 플레이어> [주간/월간] [페이지]");
                         return false;
                     }
                     handleStatsCommand(args, sender);
@@ -1134,12 +1134,35 @@ private void handleAddCommand(String[] args) {
      */
     private void handleStatsCommand(String[] args, CommandSender sender) {
         String playerName = args[1];
-        int page = 1; // 기본 페이지는 1 (이번 달)
+        String period = "월간"; // 기본값은 월간
+        int page = 1; // 기본 페이지는 1
         
-        // 페이지 번호 파싱
+        // 기간 옵션 파싱
         if (args.length > 2) {
+            String arg2 = args[2].toLowerCase();
+            if (arg2.equals("주간") || arg2.equals("weekly") || arg2.equals("week")) {
+                period = "주간";
+            } else if (arg2.equals("월간") || arg2.equals("monthly") || arg2.equals("month")) {
+                period = "월간";
+            } else {
+                // 숫자로 시작하면 페이지 번호로 인식 (기존 호환성)
+                try {
+                    page = Integer.parseInt(args[2]);
+                    if (page < 1) {
+                        sender.sendMessage(ChatColor.RED + "페이지 번호는 1 이상이어야 합니다.");
+                        return;
+                    }
+                } catch (NumberFormatException e) {
+                    sender.sendMessage(ChatColor.RED + "올바른 기간을 입력해주세요. (주간/월간)");
+                    return;
+                }
+            }
+        }
+        
+        // 페이지 번호 파싱 (기간 옵션이 있으면 3번째 인수, 없으면 2번째 인수)
+        if (args.length > 3) {
             try {
-                page = Integer.parseInt(args[2]);
+                page = Integer.parseInt(args[3]);
                 if (page < 1) {
                     sender.sendMessage(ChatColor.RED + "페이지 번호는 1 이상이어야 합니다.");
                     return;
@@ -1157,43 +1180,85 @@ private void handleAddCommand(String[] args) {
             return;
         }
         
-        // 월간 데이터 조회
-        MonthlyStats monthlyStats = getMonthlyStats(streamerUuid, page);
-        
-        if (monthlyStats == null || monthlyStats.donations.isEmpty()) {
-            sender.sendMessage(ChatColor.YELLOW + playerName + "님의 " + monthlyStats.monthYear + " 후원 데이터가 없습니다.");
-            return;
-        }
-        
-        // 월간 요약 정보 표시
-        sender.sendMessage(ChatColor.GOLD + "=== " + playerName + "님의 " + monthlyStats.monthYear + " 후원 통계 ===");
-        sender.sendMessage(ChatColor.WHITE + "총 후원금액: " + ChatColor.GREEN + formatAmount(monthlyStats.totalAmount) + "원");
-        sender.sendMessage(ChatColor.WHITE + "총 후원자 수: " + ChatColor.AQUA + monthlyStats.totalDonors + "명");
-        sender.sendMessage(ChatColor.WHITE + "평균 후원금액: " + ChatColor.YELLOW + formatAmount(monthlyStats.averageAmount) + "원");
-        sender.sendMessage("");
-        
-        // 월간 랭킹 표시
-        sender.sendMessage(ChatColor.GOLD + "=== " + monthlyStats.monthYear + " 후원 랭킹 ===");
-        
-        for (int i = 0; i < monthlyStats.donations.size(); i++) {
-            Map<String, Object> donor = monthlyStats.donations.get(i);
-            String donorName = (String) donor.get("donor_name");
-            int totalAmount = (int) donor.get("total_amount");
-            int totalCount = (int) donor.get("total_count");
-            int rank = i + 1;
+        if (period.equals("주간")) {
+            // 주간 데이터 조회
+            WeeklyStats weeklyStats = getWeeklyStats(streamerUuid, page);
             
-            String rankColor = getRankColor(rank);
-            String amountFormatted = formatAmount(totalAmount);
+            if (weeklyStats == null || weeklyStats.donations.isEmpty()) {
+                sender.sendMessage(ChatColor.YELLOW + playerName + "님의 " + weeklyStats.weekPeriod + " 후원 데이터가 없습니다.");
+                return;
+            }
             
-            sender.sendMessage(rankColor + rank + "위. " + ChatColor.WHITE + donorName + 
-                             ChatColor.GRAY + " - " + ChatColor.GREEN + amountFormatted + "원" + 
-                             ChatColor.GRAY + " (" + totalCount + "회)");
-        }
-        
-        // 다음 페이지 안내
-        MonthlyStats nextMonthStats = getMonthlyStats(streamerUuid, page + 1);
-        if (nextMonthStats != null && !nextMonthStats.donations.isEmpty()) {
-            sender.sendMessage(ChatColor.GRAY + "다음 페이지: /done stats " + playerName + " " + (page + 1) + " (" + nextMonthStats.monthYear + ")");
+            // 주간 요약 정보 표시
+            sender.sendMessage(ChatColor.GOLD + "=== " + playerName + "님의 " + weeklyStats.weekPeriod + " 후원 통계 ===");
+            sender.sendMessage(ChatColor.WHITE + "총 후원금액: " + ChatColor.GREEN + formatAmount(weeklyStats.totalAmount) + "원");
+            sender.sendMessage(ChatColor.WHITE + "총 후원자 수: " + ChatColor.AQUA + weeklyStats.totalDonors + "명");
+            sender.sendMessage(ChatColor.WHITE + "평균 후원금액: " + ChatColor.YELLOW + formatAmount(weeklyStats.averageAmount) + "원");
+            sender.sendMessage("");
+            
+            // 주간 랭킹 표시
+            sender.sendMessage(ChatColor.GOLD + "=== " + weeklyStats.weekPeriod + " 후원 랭킹 ===");
+            
+            for (int i = 0; i < weeklyStats.donations.size(); i++) {
+                Map<String, Object> donor = weeklyStats.donations.get(i);
+                String donorName = (String) donor.get("donor_name");
+                int totalAmount = (int) donor.get("total_amount");
+                int totalCount = (int) donor.get("total_count");
+                int rank = i + 1;
+                
+                String rankColor = getRankColor(rank);
+                String amountFormatted = formatAmount(totalAmount);
+                
+                sender.sendMessage(rankColor + rank + "위. " + ChatColor.WHITE + donorName + 
+                                 ChatColor.GRAY + " - " + ChatColor.GREEN + amountFormatted + "원" + 
+                                 ChatColor.GRAY + " (" + totalCount + "회)");
+            }
+            
+            // 다음 페이지 안내
+            WeeklyStats nextWeekStats = getWeeklyStats(streamerUuid, page + 1);
+            if (nextWeekStats != null && !nextWeekStats.donations.isEmpty()) {
+                sender.sendMessage(ChatColor.GRAY + "다음 페이지: /done stats " + playerName + " 주간 " + (page + 1) + " (" + nextWeekStats.weekPeriod + ")");
+            }
+            
+        } else {
+            // 월간 데이터 조회 (기존 로직)
+            MonthlyStats monthlyStats = getMonthlyStats(streamerUuid, page);
+            
+            if (monthlyStats == null || monthlyStats.donations.isEmpty()) {
+                sender.sendMessage(ChatColor.YELLOW + playerName + "님의 " + monthlyStats.monthYear + " 후원 데이터가 없습니다.");
+                return;
+            }
+            
+            // 월간 요약 정보 표시
+            sender.sendMessage(ChatColor.GOLD + "=== " + playerName + "님의 " + monthlyStats.monthYear + " 후원 통계 ===");
+            sender.sendMessage(ChatColor.WHITE + "총 후원금액: " + ChatColor.GREEN + formatAmount(monthlyStats.totalAmount) + "원");
+            sender.sendMessage(ChatColor.WHITE + "총 후원자 수: " + ChatColor.AQUA + monthlyStats.totalDonors + "명");
+            sender.sendMessage(ChatColor.WHITE + "평균 후원금액: " + ChatColor.YELLOW + formatAmount(monthlyStats.averageAmount) + "원");
+            sender.sendMessage("");
+            
+            // 월간 랭킹 표시
+            sender.sendMessage(ChatColor.GOLD + "=== " + monthlyStats.monthYear + " 후원 랭킹 ===");
+            
+            for (int i = 0; i < monthlyStats.donations.size(); i++) {
+                Map<String, Object> donor = monthlyStats.donations.get(i);
+                String donorName = (String) donor.get("donor_name");
+                int totalAmount = (int) donor.get("total_amount");
+                int totalCount = (int) donor.get("total_count");
+                int rank = i + 1;
+                
+                String rankColor = getRankColor(rank);
+                String amountFormatted = formatAmount(totalAmount);
+                
+                sender.sendMessage(rankColor + rank + "위. " + ChatColor.WHITE + donorName + 
+                                 ChatColor.GRAY + " - " + ChatColor.GREEN + amountFormatted + "원" + 
+                                 ChatColor.GRAY + " (" + totalCount + "회)");
+            }
+            
+            // 다음 페이지 안내
+            MonthlyStats nextMonthStats = getMonthlyStats(streamerUuid, page + 1);
+            if (nextMonthStats != null && !nextMonthStats.donations.isEmpty()) {
+                sender.sendMessage(ChatColor.GRAY + "다음 페이지: /done stats " + playerName + " 월간 " + (page + 1) + " (" + nextMonthStats.monthYear + ")");
+            }
         }
     }
     
@@ -1209,6 +1274,25 @@ private void handleAddCommand(String[] args) {
         
         MonthlyStats(String monthYear, List<Map<String, Object>> donations, int totalAmount, int totalDonors) {
             this.monthYear = monthYear;
+            this.donations = donations;
+            this.totalAmount = totalAmount;
+            this.totalDonors = totalDonors;
+            this.averageAmount = totalDonors > 0 ? totalAmount / totalDonors : 0;
+        }
+    }
+    
+    /**
+     * 주간 통계 데이터 클래스
+     */
+    private static class WeeklyStats {
+        String weekPeriod;
+        List<Map<String, Object>> donations;
+        int totalAmount;
+        int totalDonors;
+        int averageAmount;
+        
+        WeeklyStats(String weekPeriod, List<Map<String, Object>> donations, int totalAmount, int totalDonors) {
+            this.weekPeriod = weekPeriod;
             this.donations = donations;
             this.totalAmount = totalAmount;
             this.totalDonors = totalDonors;
@@ -1312,6 +1396,111 @@ private void handleAddCommand(String[] args) {
             
         } catch (Exception e) {
             Logger.error("월간 통계 조회 중 오류 발생: " + e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * 주간 통계 조회
+     */
+    private WeeklyStats getWeeklyStats(String streamerUuid, int page) {
+        try {
+            FileConfiguration playerData = loadPlayerData(streamerUuid);
+            if (playerData == null) {
+                return null;
+            }
+            
+            List<Map<String, Object>> allDonations = (List<Map<String, Object>>) playerData.getList("donations");
+            if (allDonations == null || allDonations.isEmpty()) {
+                return null;
+            }
+            
+            // 테스트 후원 제외
+            List<Map<String, Object>> realDonations = allDonations.stream()
+                .filter(donation -> !(Boolean) donation.get("is_test"))
+                .collect(Collectors.toList());
+            
+            if (realDonations.isEmpty()) {
+                return null;
+            }
+            
+            // 페이지에 해당하는 주 계산 (1페이지 = 이번 주, 2페이지 = 지난 주)
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime targetWeek = now.minusWeeks(page - 1);
+            
+            // 해당 주의 시작일 (월요일)과 종료일 (일요일) 계산
+            LocalDateTime weekStart = targetWeek.minusDays(targetWeek.getDayOfWeek().getValue() - 1).withHour(0).withMinute(0).withSecond(0).withNano(0);
+            LocalDateTime weekEnd = weekStart.plusDays(6).withHour(23).withMinute(59).withSecond(59).withNano(999999999);
+            
+            // 해당 주의 후원 데이터 필터링
+            List<Map<String, Object>> weeklyDonations = realDonations.stream()
+                .filter(donation -> {
+                    String timestamp = (String) donation.get("timestamp");
+                    if (timestamp == null || timestamp.isEmpty()) {
+                        return false;
+                    }
+                    
+                    try {
+                        LocalDateTime donationTime = LocalDateTime.parse(timestamp, 
+                            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                        return !donationTime.isBefore(weekStart) && !donationTime.isAfter(weekEnd);
+                    } catch (Exception e) {
+                        return false;
+                    }
+                })
+                .collect(Collectors.toList());
+            
+            String weekPeriod = weekStart.format(DateTimeFormatter.ofPattern("yyyy년 M월 d일")) + " ~ " + 
+                              weekEnd.format(DateTimeFormatter.ofPattern("M월 d일"));
+            
+            if (weeklyDonations.isEmpty()) {
+                return new WeeklyStats(
+                    weekPeriod,
+                    new ArrayList<>(),
+                    0,
+                    0
+                );
+            }
+            
+            // 후원자별로 그룹화하고 총 후원금액 계산
+            Map<String, Map<String, Object>> donorStats = new HashMap<>();
+            int totalAmount = 0;
+            
+            for (Map<String, Object> donation : weeklyDonations) {
+                String donorName = (String) donation.get("donor_name");
+                int amount = (int) donation.get("amount");
+                totalAmount += amount;
+                
+                if (donorStats.containsKey(donorName)) {
+                    Map<String, Object> stats = donorStats.get(donorName);
+                    int donorTotalAmount = (int) stats.get("total_amount");
+                    int donorTotalCount = (int) stats.get("total_count");
+                    
+                    stats.put("total_amount", donorTotalAmount + amount);
+                    stats.put("total_count", donorTotalCount + 1);
+                } else {
+                    Map<String, Object> stats = new HashMap<>();
+                    stats.put("donor_name", donorName);
+                    stats.put("total_amount", amount);
+                    stats.put("total_count", 1);
+                    donorStats.put(donorName, stats);
+                }
+            }
+            
+            // 총 후원금액 순으로 정렬
+            List<Map<String, Object>> sortedDonations = donorStats.values().stream()
+                .sorted((a, b) -> Integer.compare((int) b.get("total_amount"), (int) a.get("total_amount")))
+                .collect(Collectors.toList());
+            
+            return new WeeklyStats(
+                weekPeriod,
+                sortedDonations,
+                totalAmount,
+                donorStats.size()
+            );
+            
+        } catch (Exception e) {
+            Logger.error("주간 통계 조회 중 오류 발생: " + e.getMessage());
             return null;
         }
     }
@@ -1669,15 +1858,27 @@ private void handleAddCommand(String[] args) {
         }
 
         if (args.length == 3 && args[0].equalsIgnoreCase("stats")) {
+            // 기간 옵션 자동완성
+            List<String> periods = Arrays.asList("주간", "월간", "weekly", "monthly");
+            if (args[2].isEmpty()) {
+                return periods;
+            } else {
+                return periods.stream()
+                        .filter(period -> period.toLowerCase().startsWith(args[2].toLowerCase()))
+                        .collect(Collectors.toList());
+            }
+        }
+
+        if (args.length == 4 && args[0].equalsIgnoreCase("stats")) {
             List<String> pageNumbers = new ArrayList<>();
-            for (int i = 1; i <= 12; i++) { // 최대 12개월 (1년)
+            for (int i = 1; i <= 12; i++) { // 최대 12개월/주 (1년)
                 pageNumbers.add(String.valueOf(i));
             }
-            if (args[2].isEmpty()) {
+            if (args[3].isEmpty()) {
                 return pageNumbers;
             } else {
                 return pageNumbers.stream()
-                        .filter(page -> page.startsWith(args[2]))
+                        .filter(page -> page.startsWith(args[3]))
                         .collect(Collectors.toList());
             }
         }
