@@ -789,6 +789,14 @@ public boolean onCommand(CommandSender sender, Command command, String label, St
                     handleRankingCommand(args, sender);
                     return true;
 
+                case "stats":
+                    if (args.length < 2) {
+                        sender.sendMessage(ChatColor.RED + "사용법: /done stats <스트리머 플레이어> [페이지]");
+                        return false;
+                    }
+                    handleStatsCommand(args, sender);
+                    return true;
+
                 default:
                     return false;
             }
@@ -1121,6 +1129,193 @@ private void handleAddCommand(String[] args) {
         return String.format("%,d", amount);
     }
 
+    /**
+     * 통계 명령어 처리
+     */
+    private void handleStatsCommand(String[] args, CommandSender sender) {
+        String playerName = args[1];
+        int page = 1; // 기본 페이지는 1 (이번 달)
+        
+        // 페이지 번호 파싱
+        if (args.length > 2) {
+            try {
+                page = Integer.parseInt(args[2]);
+                if (page < 1) {
+                    sender.sendMessage(ChatColor.RED + "페이지 번호는 1 이상이어야 합니다.");
+                    return;
+                }
+            } catch (NumberFormatException e) {
+                sender.sendMessage(ChatColor.RED + "페이지 번호는 숫자로 입력해주세요.");
+                return;
+            }
+        }
+        
+        // 플레이어 UUID 찾기
+        String streamerUuid = getPlayerUuid(playerName);
+        if (streamerUuid == null) {
+            sender.sendMessage(ChatColor.RED + "플레이어 '" + playerName + "'를 찾을 수 없습니다. 서버에 접속한 적이 있는지 확인해주세요.");
+            return;
+        }
+        
+        // 월간 데이터 조회
+        MonthlyStats monthlyStats = getMonthlyStats(streamerUuid, page);
+        
+        if (monthlyStats == null || monthlyStats.donations.isEmpty()) {
+            sender.sendMessage(ChatColor.YELLOW + playerName + "님의 " + monthlyStats.monthYear + " 후원 데이터가 없습니다.");
+            return;
+        }
+        
+        // 월간 요약 정보 표시
+        sender.sendMessage(ChatColor.GOLD + "=== " + playerName + "님의 " + monthlyStats.monthYear + " 후원 통계 ===");
+        sender.sendMessage(ChatColor.WHITE + "총 후원금액: " + ChatColor.GREEN + formatAmount(monthlyStats.totalAmount) + "원");
+        sender.sendMessage(ChatColor.WHITE + "총 후원자 수: " + ChatColor.AQUA + monthlyStats.totalDonors + "명");
+        sender.sendMessage(ChatColor.WHITE + "평균 후원금액: " + ChatColor.YELLOW + formatAmount(monthlyStats.averageAmount) + "원");
+        sender.sendMessage("");
+        
+        // 월간 랭킹 표시
+        sender.sendMessage(ChatColor.GOLD + "=== " + monthlyStats.monthYear + " 후원 랭킹 ===");
+        
+        for (int i = 0; i < monthlyStats.donations.size(); i++) {
+            Map<String, Object> donor = monthlyStats.donations.get(i);
+            String donorName = (String) donor.get("donor_name");
+            int totalAmount = (int) donor.get("total_amount");
+            int totalCount = (int) donor.get("total_count");
+            int rank = i + 1;
+            
+            String rankColor = getRankColor(rank);
+            String amountFormatted = formatAmount(totalAmount);
+            
+            sender.sendMessage(rankColor + rank + "위. " + ChatColor.WHITE + donorName + 
+                             ChatColor.GRAY + " - " + ChatColor.GREEN + amountFormatted + "원" + 
+                             ChatColor.GRAY + " (" + totalCount + "회)");
+        }
+        
+        // 다음 페이지 안내
+        MonthlyStats nextMonthStats = getMonthlyStats(streamerUuid, page + 1);
+        if (nextMonthStats != null && !nextMonthStats.donations.isEmpty()) {
+            sender.sendMessage(ChatColor.GRAY + "다음 페이지: /done stats " + playerName + " " + (page + 1) + " (" + nextMonthStats.monthYear + ")");
+        }
+    }
+    
+    /**
+     * 월간 통계 데이터 클래스
+     */
+    private static class MonthlyStats {
+        String monthYear;
+        List<Map<String, Object>> donations;
+        int totalAmount;
+        int totalDonors;
+        int averageAmount;
+        
+        MonthlyStats(String monthYear, List<Map<String, Object>> donations, int totalAmount, int totalDonors) {
+            this.monthYear = monthYear;
+            this.donations = donations;
+            this.totalAmount = totalAmount;
+            this.totalDonors = totalDonors;
+            this.averageAmount = totalDonors > 0 ? totalAmount / totalDonors : 0;
+        }
+    }
+    
+    /**
+     * 월간 통계 조회
+     */
+    private MonthlyStats getMonthlyStats(String streamerUuid, int page) {
+        try {
+            FileConfiguration playerData = loadPlayerData(streamerUuid);
+            if (playerData == null) {
+                return null;
+            }
+            
+            List<Map<String, Object>> allDonations = (List<Map<String, Object>>) playerData.getList("donations");
+            if (allDonations == null || allDonations.isEmpty()) {
+                return null;
+            }
+            
+            // 테스트 후원 제외
+            List<Map<String, Object>> realDonations = allDonations.stream()
+                .filter(donation -> !(Boolean) donation.get("is_test"))
+                .collect(Collectors.toList());
+            
+            if (realDonations.isEmpty()) {
+                return null;
+            }
+            
+            // 페이지에 해당하는 월 계산 (1페이지 = 이번 달, 2페이지 = 지난 달)
+            LocalDateTime targetMonth = LocalDateTime.now().minusMonths(page - 1);
+            int targetYear = targetMonth.getYear();
+            int targetMonthValue = targetMonth.getMonthValue();
+            
+            // 해당 월의 후원 데이터 필터링
+            List<Map<String, Object>> monthlyDonations = realDonations.stream()
+                .filter(donation -> {
+                    String timestamp = (String) donation.get("timestamp");
+                    if (timestamp == null || timestamp.isEmpty()) {
+                        return false;
+                    }
+                    
+                    try {
+                        LocalDateTime donationTime = LocalDateTime.parse(timestamp, 
+                            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                        return donationTime.getYear() == targetYear && 
+                               donationTime.getMonthValue() == targetMonthValue;
+                    } catch (Exception e) {
+                        return false;
+                    }
+                })
+                .collect(Collectors.toList());
+            
+            if (monthlyDonations.isEmpty()) {
+                return new MonthlyStats(
+                    targetYear + "년 " + targetMonthValue + "월",
+                    new ArrayList<>(),
+                    0,
+                    0
+                );
+            }
+            
+            // 후원자별로 그룹화하고 총 후원금액 계산
+            Map<String, Map<String, Object>> donorStats = new HashMap<>();
+            int totalAmount = 0;
+            
+            for (Map<String, Object> donation : monthlyDonations) {
+                String donorName = (String) donation.get("donor_name");
+                int amount = (int) donation.get("amount");
+                totalAmount += amount;
+                
+                if (donorStats.containsKey(donorName)) {
+                    Map<String, Object> stats = donorStats.get(donorName);
+                    int donorTotalAmount = (int) stats.get("total_amount");
+                    int donorTotalCount = (int) stats.get("total_count");
+                    
+                    stats.put("total_amount", donorTotalAmount + amount);
+                    stats.put("total_count", donorTotalCount + 1);
+                } else {
+                    Map<String, Object> stats = new HashMap<>();
+                    stats.put("donor_name", donorName);
+                    stats.put("total_amount", amount);
+                    stats.put("total_count", 1);
+                    donorStats.put(donorName, stats);
+                }
+            }
+            
+            // 총 후원금액 순으로 정렬
+            List<Map<String, Object>> sortedDonations = donorStats.values().stream()
+                .sorted((a, b) -> Integer.compare((int) b.get("total_amount"), (int) a.get("total_amount")))
+                .collect(Collectors.toList());
+            
+            return new MonthlyStats(
+                targetYear + "년 " + targetMonthValue + "월",
+                sortedDonations,
+                totalAmount,
+                donorStats.size()
+            );
+            
+        } catch (Exception e) {
+            Logger.error("월간 통계 조회 중 오류 발생: " + e.getMessage());
+            return null;
+        }
+    }
+
     private boolean connectChzzkForPlayer(String playerName) {
         for (Map<String, String> chzzkUser : chzzkUserList) {
             if (playerName.equalsIgnoreCase(chzzkUser.get("tag"))) {
@@ -1368,7 +1563,7 @@ private void handleAddCommand(String[] args) {
         }
 
         if (args.length == 1) {
-            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect", "test", "ranking"));
+            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect", "test", "ranking", "stats"));
 
             if (args[0].isEmpty()) {
                 return commandList;
@@ -1449,6 +1644,33 @@ private void handleAddCommand(String[] args) {
         if (args.length == 3 && args[0].equalsIgnoreCase("ranking")) {
             List<String> pageNumbers = new ArrayList<>();
             for (int i = 1; i <= 10; i++) {
+                pageNumbers.add(String.valueOf(i));
+            }
+            if (args[2].isEmpty()) {
+                return pageNumbers;
+            } else {
+                return pageNumbers.stream()
+                        .filter(page -> page.startsWith(args[2]))
+                        .collect(Collectors.toList());
+            }
+        }
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("stats")) {
+            if (args[1].isEmpty()) {
+                return Bukkit.getOnlinePlayers().stream()
+                        .map(Player::getName)
+                        .collect(Collectors.toList());
+            } else {
+                return Bukkit.getOnlinePlayers().stream()
+                        .map(Player::getName)
+                        .filter(name -> name.toLowerCase().startsWith(args[1].toLowerCase()))
+                        .collect(Collectors.toList());
+            }
+        }
+
+        if (args.length == 3 && args[0].equalsIgnoreCase("stats")) {
+            List<String> pageNumbers = new ArrayList<>();
+            for (int i = 1; i <= 12; i++) { // 최대 12개월 (1년)
                 pageNumbers.add(String.valueOf(i));
             }
             if (args[2].isEmpty()) {
