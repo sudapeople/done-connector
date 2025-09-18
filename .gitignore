@@ -260,3 +260,9 @@ error.log
 *.tar.gz
 *.rar
 *.7z
+
+# Cursor AI assistant files
+CURSOR.md
+AUTH_SYSTEM.md
+API_DOCUMENTATION.md
+DASHBOARD_ACCESS.md

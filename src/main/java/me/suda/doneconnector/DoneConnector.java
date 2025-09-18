@@ -7,6 +7,8 @@ import me.suda.doneconnector.chzzk.ChzzkApi;
 import me.suda.doneconnector.chzzk.ChzzkWebSocket;
 import me.suda.doneconnector.exception.DoneException;
 import me.suda.doneconnector.exception.ExceptionCode;
+import me.suda.doneconnector.auth.AuthManager;
+import me.suda.doneconnector.auth.AuthCommands;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
@@ -56,6 +58,10 @@ public final class DoneConnector extends JavaPlugin implements Listener {
 
     // 추가할 필드 선언
     private final ExecutorService connectionExecutor = Executors.newFixedThreadPool(2);
+    
+    // 인증 시스템 관련 필드
+    private AuthManager authManager;
+    private AuthCommands authCommands;
 
     // sharedScheduler 수정
     private final ScheduledExecutorService sharedScheduler = Executors.newScheduledThreadPool(1,
@@ -78,18 +84,27 @@ public final class DoneConnector extends JavaPlugin implements Listener {
             // data 디렉토리 생성
             createDataDirectory();
             
+            // 인증 시스템 초기화
+            initializeAuthSystem();
+            
             loadConfig();
             
-            // 자동 연결 설정이 활성화된 경우에만 서버 시작 시 모든 채널 연결
-            if (autoConnect) {
-                connectChzzkList();
-                connectSoopList();
-                Logger.info(ChatColor.GREEN + "전체 채널 자동 연결 완료.");
+            // 인증이 활성화된 경우에만 플러그인 기능 활성화
+            if (authManager != null && authManager.isAuthenticated()) {
+                // 자동 연결 설정이 활성화된 경우에만 서버 시작 시 모든 채널 연결
+                if (autoConnect) {
+                    connectChzzkList();
+                    connectSoopList();
+                    Logger.info(ChatColor.GREEN + "전체 채널 자동 연결 완료.");
+                } else {
+                    Logger.info(ChatColor.YELLOW + "자동 연결이 비활성화되어 있습니다. 플레이어 접속 시 개별 채널만 연결됩니다.");
+                }
+                Logger.info(ChatColor.GREEN + "플러그인 활성화 완료.");
             } else {
-                Logger.info(ChatColor.YELLOW + "자동 연결이 비활성화되어 있습니다. 플레이어 접속 시 개별 채널만 연결됩니다.");
+                Logger.warn(ChatColor.RED + "인증이 완료되지 않아 플러그인 기능이 비활성화되었습니다.");
+                Logger.warn(ChatColor.YELLOW + "/doneconnector auth 명령어로 인증을 시도하거나");
+                Logger.warn(ChatColor.YELLOW + "/doneconnector register 명령어로 서버를 등록하세요.");
             }
-            
-            Logger.info(ChatColor.GREEN + "플러그인 활성화 완료.");
         } catch (Exception e) {
             Logger.error("플러그인 초기화 중 오류가 발생했습니다: " + e.getMessage());
             Bukkit.getPluginManager().disablePlugin(this);
@@ -103,6 +118,11 @@ public final class DoneConnector extends JavaPlugin implements Listener {
             disconnectChzzkList();
             disconnectSoopList();
             
+            // 인증 시스템 종료
+            if (authManager != null) {
+                authManager.shutdown();
+            }
+            
             // 공유 스케줄러 종료
             sharedScheduler.shutdown();
             if (!sharedScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -115,6 +135,34 @@ public final class DoneConnector extends JavaPlugin implements Listener {
         }
     }
 
+    /**
+     * 인증 시스템 초기화
+     */
+    private void initializeAuthSystem() {
+        try {
+            Logger.info("인증 시스템을 초기화합니다...");
+            
+            // AuthManager 생성 및 초기화
+            authManager = new AuthManager(this);
+            authManager.initialize();
+            
+            // AuthCommands 생성
+            authCommands = new AuthCommands(this, authManager);
+            
+            // doneconnector 명령어 등록
+            Objects.requireNonNull(this.getCommand("doneconnector")).setExecutor(authCommands);
+            Objects.requireNonNull(this.getCommand("doneconnector")).setTabCompleter(authCommands);
+            
+            Logger.info(ChatColor.GREEN + "인증 시스템 초기화 완료");
+            
+        } catch (Exception e) {
+            Logger.error("인증 시스템 초기화 중 오류 발생: " + e.getMessage());
+            e.printStackTrace();
+            authManager = null;
+            authCommands = null;
+        }
+    }
+    
     /**
      * data 디렉토리 생성
      */
@@ -674,7 +722,7 @@ private boolean connectSoop(Map<String, String> soopUser) {
         Logger.debug("숲 웹소켓 연결 종료 완료");
     }
 
-public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!label.equalsIgnoreCase("done")) {
             return false;
         } else if (!sender.isOp()) {
@@ -682,6 +730,15 @@ public boolean onCommand(CommandSender sender, Command command, String label, St
             return false;
         } else if (args.length < 1) {
             return false;
+        }
+        
+        // 인증 상태 확인 (인증 관련 명령어 제외)
+        String subCommand = args[0].toLowerCase();
+        if (!isAuthRelatedCommand(subCommand) && !isAuthenticated()) {
+            sender.sendMessage(ChatColor.RED + "플러그인이 인증되지 않았습니다.");
+            sender.sendMessage(ChatColor.YELLOW + "/doneconnector auth 명령어로 인증을 시도하거나");
+            sender.sendMessage(ChatColor.YELLOW + "/doneconnector register 명령어로 서버를 등록하세요.");
+            return true;
         }
 
         try {
@@ -1605,6 +1662,12 @@ private void handleAddCommand(String[] args) {
      */
     @EventHandler(priority = EventPriority.NORMAL)
     public void onPlayerJoin(PlayerJoinEvent event) {
+        // 인증 상태 확인
+        if (!isAuthenticated()) {
+            Logger.debug("[자동연결] 인증되지 않은 서버이므로 자동 연결을 건너뜁니다.");
+            return;
+        }
+        
         // 리로딩 중일 때는 자동 연결 건너뛰기
         if (isReloading) {
             Logger.debug("[자동연결] 현재 리로딩 중이므로 자동 연결을 건너뜁니다.");
@@ -1884,6 +1947,38 @@ private void handleAddCommand(String[] args) {
         }
 
         return Collections.emptyList();
+    }
+    
+    /**
+     * 인증 관련 명령어인지 확인
+     */
+    private boolean isAuthRelatedCommand(String command) {
+        return "auth".equals(command) || "register".equals(command) || "status".equals(command);
+    }
+    
+    /**
+     * 인증 상태 확인
+     */
+    private boolean isAuthenticated() {
+        return authManager != null && authManager.isAuthenticated();
+    }
+    
+    /**
+     * 인증 매니저 반환
+     */
+    public AuthManager getAuthManager() {
+        return authManager;
+    }
+    
+    /**
+     * 인증이 필요한 기능 사용 전 확인
+     */
+    public boolean checkAuthentication(String featureName) {
+        if (!isAuthenticated()) {
+            Logger.warn(ChatColor.RED + featureName + " 기능 사용 시도 - 인증되지 않은 서버");
+            return false;
+        }
+        return true;
     }
 
     /**

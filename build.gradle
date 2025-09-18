@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'me.suda'
-version = '1.10.1'
+version = '1.11.1'
 
 repositories {
     mavenCentral()
