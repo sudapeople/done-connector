@@ -281,10 +281,10 @@ public class AuthWebClient {
                 // 성공 응답
                 String message = (String) jsonResponse.get("message");
                 if (message == null) {
-                    message = "인증이 성공했습니다.";
+                    message = "요청이 성공했습니다.";
                 }
                 
-                // 추가 데이터 추출
+                // 추가 데이터 추출 (data 필드가 있는 경우)
                 Map<String, Object> data = new HashMap<>();
                 if (jsonResponse.containsKey("data")) {
                     Object dataObj = jsonResponse.get("data");
@@ -292,6 +292,13 @@ public class AuthWebClient {
                         JSONObject dataJson = (JSONObject) dataObj;
                         for (Object key : dataJson.keySet()) {
                             data.put(key.toString(), dataJson.get(key));
+                        }
+                    }
+                } else {
+                    // data 필드가 없으면 전체 응답을 data로 사용
+                    for (Object key : jsonResponse.keySet()) {
+                        if (!"status".equals(key.toString())) {
+                            data.put(key.toString(), jsonResponse.get(key));
                         }
                     }
                 }

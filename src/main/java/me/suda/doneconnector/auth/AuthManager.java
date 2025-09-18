@@ -73,8 +73,11 @@ public class AuthManager {
         // 3. 서버 정보 생성
         generateServerInfo();
         
-        // 4. 초기 인증 시도
-        performAuthentication();
+        // 4. 초기 인증 시도 (실패 시 자동 등록)
+        if (!performAuthentication()) {
+            Logger.info(ChatColor.YELLOW + "인증 실패 - 자동으로 서버 등록을 시도합니다...");
+            performRegistration();
+        }
         
         // 5. 자동 인증 스케줄러 시작
         startAuthSchedulers();
