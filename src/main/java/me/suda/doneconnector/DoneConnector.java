@@ -102,8 +102,8 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                 Logger.info(ChatColor.GREEN + "플러그인 활성화 완료.");
             } else {
                 Logger.warn(ChatColor.RED + "인증이 완료되지 않아 플러그인 기능이 비활성화되었습니다.");
-                Logger.warn(ChatColor.YELLOW + "/doneconnector auth 명령어로 인증을 시도하거나");
-                Logger.warn(ChatColor.YELLOW + "/doneconnector register 명령어로 서버를 등록하세요.");
+                Logger.warn(ChatColor.YELLOW + "/done auth 명령어로 인증을 시도하거나");
+                Logger.warn(ChatColor.YELLOW + "/done register 명령어로 서버를 등록하세요.");
             }
         } catch (Exception e) {
             Logger.error("플러그인 초기화 중 오류가 발생했습니다: " + e.getMessage());
@@ -149,9 +149,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
             // AuthCommands 생성
             authCommands = new AuthCommands(this, authManager);
             
-            // doneconnector 명령어 등록
-            Objects.requireNonNull(this.getCommand("doneconnector")).setExecutor(authCommands);
-            Objects.requireNonNull(this.getCommand("doneconnector")).setTabCompleter(authCommands);
+            // 인증 명령어는 done 명령어에 통합됨 (별도 등록 불필요)
             
             Logger.info(ChatColor.GREEN + "인증 시스템 초기화 완료");
             
@@ -736,8 +734,8 @@ private boolean connectSoop(Map<String, String> soopUser) {
         String subCommand = args[0].toLowerCase();
         if (!isAuthRelatedCommand(subCommand) && !isAuthenticated()) {
             sender.sendMessage(ChatColor.RED + "플러그인이 인증되지 않았습니다.");
-            sender.sendMessage(ChatColor.YELLOW + "/doneconnector auth 명령어로 인증을 시도하거나");
-            sender.sendMessage(ChatColor.YELLOW + "/doneconnector register 명령어로 서버를 등록하세요.");
+            sender.sendMessage(ChatColor.YELLOW + "/done auth 명령어로 인증을 시도하거나");
+            sender.sendMessage(ChatColor.YELLOW + "/done register 명령어로 서버를 등록하세요.");
             return true;
         }
 
@@ -852,6 +850,28 @@ private boolean connectSoop(Map<String, String> soopUser) {
                         return false;
                     }
                     handleStatsCommand(args, sender);
+                    return true;
+
+                // 인증 관련 명령어 추가
+                case "auth":
+                    if (authCommands != null) {
+                        return authCommands.onCommand(sender, command, label, args);
+                    }
+                    sender.sendMessage(ChatColor.RED + "인증 시스템이 초기화되지 않았습니다.");
+                    return true;
+
+                case "register":
+                    if (authCommands != null) {
+                        return authCommands.onCommand(sender, command, label, args);
+                    }
+                    sender.sendMessage(ChatColor.RED + "인증 시스템이 초기화되지 않았습니다.");
+                    return true;
+
+                case "status":
+                    if (authCommands != null) {
+                        return authCommands.onCommand(sender, command, label, args);
+                    }
+                    sender.sendMessage(ChatColor.RED + "인증 시스템이 초기화되지 않았습니다.");
                     return true;
 
                 default:
@@ -1815,7 +1835,7 @@ private void handleAddCommand(String[] args) {
         }
 
         if (args.length == 1) {
-            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect", "test", "ranking", "stats"));
+            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect", "test", "ranking", "stats", "auth", "register", "status"));
 
             if (args[0].isEmpty()) {
                 return commandList;

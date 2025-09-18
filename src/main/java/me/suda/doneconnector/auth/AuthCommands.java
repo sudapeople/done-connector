@@ -33,19 +33,19 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
      */
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!command.getName().equalsIgnoreCase("doneconnector")) {
+        if (!command.getName().equalsIgnoreCase("done")) {
             return false;
         }
         
-        // 권한 확인
-        if (!sender.hasPermission("doneconnector.admin")) {
+        // OP 권한 확인
+        if (!sender.isOp()) {
             sender.sendMessage(ChatColor.RED + "이 명령어를 사용할 권한이 없습니다.");
             return true;
         }
         
+        // args[0]이 인증 관련 명령어인지 확인
         if (args.length == 0) {
-            showHelp(sender);
-            return true;
+            return false; // 메인 DoneConnector에서 처리
         }
         
         String subCommand = args[0].toLowerCase();
@@ -53,8 +53,6 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
         switch (subCommand) {
             case "auth":
                 return handleAuthCommand(sender, args);
-            case "reload":
-                return handleReloadCommand(sender, args);
             case "status":
                 return handleStatusCommand(sender, args);
             case "register":
@@ -65,8 +63,7 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
                 showHelp(sender);
                 return true;
             default:
-                sender.sendMessage(ChatColor.RED + "알 수 없는 명령어입니다. /doneconnector help를 참조하세요.");
-                return true;
+                return false; // 다른 명령어는 메인 DoneConnector에서 처리
         }
     }
     
@@ -75,7 +72,7 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
      */
     private boolean handleAuthCommand(CommandSender sender, String[] args) {
         if (args.length > 1) {
-            sender.sendMessage(ChatColor.RED + "사용법: /doneconnector auth");
+            sender.sendMessage(ChatColor.RED + "사용법: /done auth");
             return true;
         }
         
@@ -155,7 +152,7 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
      */
     private boolean handleStatusCommand(CommandSender sender, String[] args) {
         if (args.length > 1) {
-            sender.sendMessage(ChatColor.RED + "사용법: /doneconnector status");
+            sender.sendMessage(ChatColor.RED + "사용법: /done status");
             return true;
         }
         
@@ -197,7 +194,7 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
      */
     private boolean handleRegisterCommand(CommandSender sender, String[] args) {
         if (args.length > 1) {
-            sender.sendMessage(ChatColor.RED + "사용법: /doneconnector register");
+            sender.sendMessage(ChatColor.RED + "사용법: /done register");
             return true;
         }
         
@@ -232,7 +229,7 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
      */
     private boolean handleTestCommand(CommandSender sender, String[] args) {
         if (args.length > 1) {
-            sender.sendMessage(ChatColor.RED + "사용법: /doneconnector test");
+            sender.sendMessage(ChatColor.RED + "사용법: /done test");
             return true;
         }
         
@@ -300,12 +297,10 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
      */
     private void showHelp(CommandSender sender) {
         sender.sendMessage(ChatColor.GOLD + "=== DoneConnector 인증 명령어 도움말 ===");
-        sender.sendMessage(ChatColor.WHITE + "/doneconnector auth" + ChatColor.GRAY + " - 웹서버 인증 시도");
-        sender.sendMessage(ChatColor.WHITE + "/doneconnector reload" + ChatColor.GRAY + " - 설정 리로드 및 인증");
-        sender.sendMessage(ChatColor.WHITE + "/doneconnector status" + ChatColor.GRAY + " - 인증 상태 확인");
-        sender.sendMessage(ChatColor.WHITE + "/doneconnector register" + ChatColor.GRAY + " - 웹서버에 서버 등록");
-        sender.sendMessage(ChatColor.WHITE + "/doneconnector test" + ChatColor.GRAY + " - 연결 테스트");
-        sender.sendMessage(ChatColor.WHITE + "/doneconnector help" + ChatColor.GRAY + " - 이 도움말 표시");
+        sender.sendMessage(ChatColor.WHITE + "/done auth" + ChatColor.GRAY + " - 웹서버 인증 시도");
+        sender.sendMessage(ChatColor.WHITE + "/done status" + ChatColor.GRAY + " - 인증 상태 확인");
+        sender.sendMessage(ChatColor.WHITE + "/done register" + ChatColor.GRAY + " - 웹서버에 서버 등록");
+        sender.sendMessage(ChatColor.WHITE + "/done test" + ChatColor.GRAY + " - 연결 테스트");
         sender.sendMessage(ChatColor.GRAY + "모든 명령어는 OP 권한이 필요합니다.");
     }
     
@@ -314,11 +309,11 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
      */
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String label, String[] args) {
-        if (!command.getName().equalsIgnoreCase("doneconnector")) {
+        if (!command.getName().equalsIgnoreCase("done")) {
             return Collections.emptyList();
         }
         
-        if (!sender.hasPermission("doneconnector.admin")) {
+        if (!sender.isOp()) {
             return Collections.emptyList();
         }
         
