@@ -207,7 +207,14 @@ public class AuthManager {
             serverInfo.put("server_name", getServerName());
             
             // 외부 IP 주소 (필수) - 실패 시 예외 발생
-            String externalIp = getExternalIP();
+            String externalIp;
+            try {
+                externalIp = getExternalIP();
+            } catch (Exception e) {
+                // 로컬 테스트 환경에서는 테스트 IP 사용
+                Logger.warn(ChatColor.YELLOW + "외부 IP 조회 실패 - 테스트 IP 사용: " + e.getMessage());
+                externalIp = "127.0.0.1"; // 테스트용
+            }
             serverInfo.put("server_ip", externalIp);
             
             // 서버 포트
@@ -234,6 +241,12 @@ public class AuthManager {
             currentServerInfo = convertMapToJson(serverInfo);
             
             Logger.info(ChatColor.GREEN + "서버 정보가 생성되었습니다: " + serverInfo.get("server_name") + " (" + externalIp + ")");
+            Logger.info(ChatColor.YELLOW + "전송할 서버 정보:");
+            Logger.info("  - 서버명: " + serverInfo.get("server_name"));
+            Logger.info("  - 서버 IP: " + serverInfo.get("server_ip"));
+            Logger.info("  - 서버 포트: " + serverInfo.get("server_port"));
+            Logger.info("  - 플러그인 버전: " + serverInfo.get("plugin_version"));
+            Logger.info("  - 서버 버전: " + serverInfo.get("server_version"));
             
         } catch (Exception e) {
             Logger.error(ChatColor.RED + "서버 정보 생성 중 오류 발생: " + e.getMessage());
@@ -434,13 +447,13 @@ public class AuthManager {
     }
     
     /**
-     * 서버명 조회
+     * 서버명 조회 - 개선된 버전
      */
     private String getServerName() {
         try {
-            // 1. server.properties에서 motd 가져오기
             String serverName = null;
             
+            // 1. server.properties에서 motd 가져오기
             try {
                 File serverProperties = new File("server.properties");
                 if (serverProperties.exists()) {
@@ -448,9 +461,14 @@ public class AuthManager {
                     for (String line : lines) {
                         if (line.startsWith("motd=")) {
                             serverName = line.substring(5).trim();
-                            // 색상 코드 제거
-                            serverName = serverName.replaceAll("§[0-9a-fk-or]", "");
-                            break;
+                            // 색상 코드 및 특수 문자 제거
+                            serverName = serverName.replaceAll("§[0-9a-fk-or]", "")
+                                                 .replaceAll("\\\\n", " ")
+                                                 .replaceAll("[\\r\\n]", " ")
+                                                 .trim();
+                            if (!serverName.isEmpty()) {
+                                break;
+                            }
                         }
                     }
                 }
@@ -458,21 +476,35 @@ public class AuthManager {
                 Logger.debug("server.properties 읽기 실패: " + e.getMessage());
             }
             
-            // 2. 여전히 없으면 Bukkit API 사용
+            // 2. Bukkit API 사용
             if (serverName == null || serverName.trim().isEmpty()) {
-                serverName = plugin.getServer().getName();
+                try {
+                    serverName = plugin.getServer().getName();
+                    if (serverName != null) {
+                        serverName = serverName.trim();
+                    }
+                } catch (Exception e) {
+                    Logger.debug("Bukkit 서버명 조회 실패: " + e.getMessage());
+                }
             }
             
-            // 3. 여전히 없으면 기본값 사용
-            if (serverName == null || serverName.trim().isEmpty()) {
-                serverName = "Paper-Server";
+            // 3. 플러그인 기반 이름 생성
+            if (serverName == null || serverName.trim().isEmpty() || "Unknown".equals(serverName)) {
+                serverName = "DoneConnector-Server-" + System.currentTimeMillis() % 10000;
             }
             
-            return serverName.trim();
+            // 4. 최종 검증 및 정리
+            serverName = serverName.trim();
+            if (serverName.length() > 50) {
+                serverName = serverName.substring(0, 50) + "...";
+            }
+            
+            Logger.debug("서버명 결정: " + serverName);
+            return serverName;
             
         } catch (Exception e) {
             Logger.error("서버명 조회 중 오류 발생: " + e.getMessage());
-            return "Paper-Server";
+            return "DoneConnector-Server-" + System.currentTimeMillis() % 10000;
         }
     }
     
@@ -811,6 +843,7 @@ public class AuthManager {
     private void sendPluginUsageNotification() {
         try {
             Logger.info(ChatColor.YELLOW + "웹서버에 플러그인 사용 정보를 전송합니다...");
+            Logger.debug("전송할 데이터: " + currentServerInfo);
             
             // 비동기로 플러그인 사용 알림 전송 (인증 여부와 상관없이)
             CompletableFuture.runAsync(() -> {
@@ -819,7 +852,13 @@ public class AuthManager {
                     
                     if (result.isSuccess()) {
                         Logger.info(ChatColor.GREEN + "플러그인 사용 정보 전송 성공");
-                        Logger.debug("응답: " + result.getMessage());
+                        Logger.info("응답: " + result.getMessage());
+                        
+                        // 서버 수 정보도 표시
+                        Object serverCount = result.getData("server_count");
+                        if (serverCount != null) {
+                            Logger.info(ChatColor.AQUA + "현재 활성 서버 수: " + serverCount);
+                        }
                     } else {
                         Logger.warn(ChatColor.YELLOW + "플러그인 사용 정보 전송 실패: " + result.getMessage());
                     }
