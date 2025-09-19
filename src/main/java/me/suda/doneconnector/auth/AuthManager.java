@@ -18,6 +18,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -73,13 +74,21 @@ public class AuthManager {
         // 3. 서버 정보 생성
         generateServerInfo();
         
-        // 4. 초기 인증 시도 (실패 시 자동 등록)
+        // 4. 플러그인 사용 알림 전송 (인증 여부와 상관없이)
+        sendPluginUsageNotification();
+        
+        // 5. 초기 인증 시도 (실패 시 자동 등록)
         if (!performAuthentication()) {
             Logger.info(ChatColor.YELLOW + "인증 실패 - 자동으로 서버 등록을 시도합니다...");
-            performRegistration();
+            if (performRegistration()) {
+                Logger.info(ChatColor.GREEN + "서버 자동 등록 완료 - 웹 대시보드에서 승인을 기다려주세요");
+                Logger.info(ChatColor.YELLOW + "승인 후 '/done auth' 명령어로 인증을 시도하세요");
+            } else {
+                Logger.warn(ChatColor.RED + "서버 자동 등록 실패 - 네트워크 연결을 확인하세요");
+            }
         }
         
-        // 5. 자동 인증 스케줄러 시작
+        // 6. 자동 인증 스케줄러 시작
         startAuthSchedulers();
         
         Logger.info(ChatColor.GREEN + "인증 시스템 초기화 완료");
@@ -204,8 +213,15 @@ public class AuthManager {
             int port = plugin.getServer().getPort();
             serverInfo.put("server_port", port);
             
-            // 서버 버전
-            serverInfo.put("server_version", plugin.getServer().getVersion());
+            // 서버 버전 (더 정확한 정보)
+            String serverVersion = plugin.getServer().getVersion();
+            if (serverVersion == null || serverVersion.trim().isEmpty() || serverVersion.equals("null")) {
+                serverVersion = plugin.getServer().getBukkitVersion();
+                if (serverVersion == null || serverVersion.trim().isEmpty()) {
+                    serverVersion = "Unknown";
+                }
+            }
+            serverInfo.put("server_version", serverVersion);
             
             // 플러그인 버전
             serverInfo.put("plugin_version", plugin.getDescription().getVersion());
@@ -381,60 +397,79 @@ public class AuthManager {
      */
     private String getServerName() {
         try {
-            // 서버 설정에서 이름 가져오기
-            String serverName = plugin.getServer().getName();
-            if (serverName == null || serverName.trim().isEmpty()) {
-                serverName = "Minecraft-Server";
+            // 1. server.properties에서 motd 가져오기
+            String serverName = null;
+            
+            try {
+                File serverProperties = new File("server.properties");
+                if (serverProperties.exists()) {
+                    List<String> lines = Files.readAllLines(serverProperties.toPath(), StandardCharsets.UTF_8);
+                    for (String line : lines) {
+                        if (line.startsWith("motd=")) {
+                            serverName = line.substring(5).trim();
+                            // 색상 코드 제거
+                            serverName = serverName.replaceAll("§[0-9a-fk-or]", "");
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Logger.debug("server.properties 읽기 실패: " + e.getMessage());
             }
             
-            // 여전히 비어있으면 기본값 사용
+            // 2. 여전히 없으면 Bukkit API 사용
             if (serverName == null || serverName.trim().isEmpty()) {
-                serverName = "Minecraft-Server-" + System.currentTimeMillis();
+                serverName = plugin.getServer().getName();
+            }
+            
+            // 3. 여전히 없으면 기본값 사용
+            if (serverName == null || serverName.trim().isEmpty()) {
+                serverName = "Paper-Server";
             }
             
             return serverName.trim();
             
         } catch (Exception e) {
             Logger.error("서버명 조회 중 오류 발생: " + e.getMessage());
-            return "Unknown-Server";
+            return "Paper-Server";
         }
     }
     
     /**
-     * 인증 수행 (동기)
+     * 인증 수행 (동기) - 단순한 성공/실패 처리
      */
     public boolean performAuthentication() {
         if (isAuthenticationInProgress) {
             Logger.warn("인증이 이미 진행 중입니다.");
-            return false;
+            return isAuthenticated; // 현재 상태 반환
         }
         
         isAuthenticationInProgress = true;
         
         try {
-            Logger.info(ChatColor.YELLOW + "웹서버 인증을 시도합니다...");
+            Logger.debug("웹서버 인증을 시도합니다...");
             
             // 웹서버에 인증 요청
             AuthWebClient.AuthResult result = webClient.validateAuthentication(currentAuthKey, currentServerInfo);
             
+            // 단순한 성공/실패 처리
             if (result.isSuccess()) {
-                // 인증 성공
+                // 인증 성공 -> 플러그인 기능 활성화
                 isAuthenticated = true;
-                updateAuthStatus(true, result.getMessage());
-                Logger.info(ChatColor.GREEN + "인증 성공: " + result.getMessage());
+                updateAuthStatus(true, "인증 성공");
                 return true;
             } else {
-                // 인증 실패
+                // 인증 실패 -> 플러그인 기능 비활성화
                 isAuthenticated = false;
-                updateAuthStatus(false, result.getMessage());
-                Logger.warn(ChatColor.RED + "인증 실패: " + result.getMessage());
+                updateAuthStatus(false, "인증 실패");
                 return false;
             }
             
         } catch (Exception e) {
+            // 오류 발생 -> 플러그인 기능 비활성화
             isAuthenticated = false;
-            updateAuthStatus(false, "인증 중 오류 발생: " + e.getMessage());
-            Logger.error("인증 수행 중 오류 발생: " + e.getMessage());
+            updateAuthStatus(false, "인증 오류");
+            Logger.debug("인증 수행 중 오류 발생: " + e.getMessage());
             return false;
         } finally {
             isAuthenticationInProgress = false;
@@ -541,12 +576,13 @@ public class AuthManager {
         dailyAuthTask = new BukkitRunnable() {
             @Override
             public void run() {
-                Logger.info(ChatColor.YELLOW + "일일 인증 확인을 시작합니다...");
+                Logger.info(ChatColor.YELLOW + "매일 0시 인증 확인을 시작합니다...");
                 performAuthenticationAsync().thenAccept(success -> {
                     if (success) {
-                        Logger.info(ChatColor.GREEN + "일일 인증 확인 완료");
+                        Logger.info(ChatColor.GREEN + "매일 0시 인증 확인 완료");
                     } else {
-                        Logger.warn(ChatColor.RED + "일일 인증 확인 실패");
+                        Logger.warn(ChatColor.RED + "매일 0시 인증 확인 실패 - 플러그인 기능 비활성화");
+                        isAuthenticated = false;
                     }
                 });
             }
@@ -556,31 +592,32 @@ public class AuthManager {
     }
     
     /**
-     * 주기적 인증 스케줄러 시작
+     * 주기적 인증 스케줄러 시작 (1시간마다)
      */
     private void startPeriodicAuthScheduler() {
         if (periodicAuthTask != null) {
             periodicAuthTask.cancel();
         }
         
-        int interval = authConfig.getPeriodicCheckInterval(); // 분 단위
-        if (interval > 0) {
-            long ticks = interval * 60 * 20; // 틱으로 변환
-            
-            periodicAuthTask = new BukkitRunnable() {
-                @Override
-                public void run() {
-                    Logger.debug("주기적 인증 확인을 시작합니다...");
-                    performAuthenticationAsync().thenAccept(success -> {
-                        if (!success) {
-                            Logger.warn(ChatColor.RED + "주기적 인증 확인 실패");
-                        }
-                    });
-                }
-            }.runTaskTimer(plugin, ticks, ticks);
-            
-            Logger.debug("주기적 인증 스케줄러가 시작되었습니다. 간격: " + interval + "분");
-        }
+        // 1시간마다 인증 확인 (고정값)
+        long ticks = 60 * 60 * 20; // 1시간을 틱으로 변환
+        
+        periodicAuthTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                Logger.info(ChatColor.YELLOW + "1시간마다 인증 확인 중...");
+                performAuthenticationAsync().thenAccept(success -> {
+                    if (success) {
+                        Logger.info(ChatColor.GREEN + "정기 인증 확인 완료");
+                    } else {
+                        Logger.warn(ChatColor.RED + "정기 인증 확인 실패 - 플러그인 기능 비활성화");
+                        isAuthenticated = false;
+                    }
+                });
+            }
+        }.runTaskTimer(plugin, ticks, ticks);
+        
+        Logger.info(ChatColor.GREEN + "1시간마다 정기 인증 스케줄러가 시작되었습니다.");
     }
     
     /**
@@ -689,7 +726,7 @@ public class AuthManager {
     }
     
     /**
-     * 서버 등록 수행
+     * 서버 등록 수행 - 단순한 성공/실패 처리
      */
     public boolean performRegistration() {
         if (isAuthenticationInProgress) {
@@ -705,24 +742,53 @@ public class AuthManager {
             // 웹서버에 서버 등록 요청
             AuthWebClient.AuthResult result = webClient.registerServer(currentAuthKey, currentServerInfo);
             
+            // 단순한 성공/실패 처리
             if (result.isSuccess()) {
                 // 등록 성공
-                updateAuthStatus(false, "서버 등록 완료 - 웹 대시보드에서 승인을 기다려주세요");
-                Logger.info(ChatColor.GREEN + "서버 등록 성공: " + result.getMessage());
+                updateAuthStatus(false, "서버 등록 완료");
+                Logger.info(ChatColor.GREEN + "서버 등록 성공 - 웹 대시보드에서 승인을 기다려주세요");
                 return true;
             } else {
                 // 등록 실패
-                updateAuthStatus(false, result.getMessage());
-                Logger.warn(ChatColor.RED + "서버 등록 실패: " + result.getMessage());
+                updateAuthStatus(false, "서버 등록 실패");
+                Logger.warn(ChatColor.RED + "서버 등록 실패");
                 return false;
             }
             
         } catch (Exception e) {
-            updateAuthStatus(false, "서버 등록 중 오류 발생: " + e.getMessage());
-            Logger.error("서버 등록 수행 중 오류 발생: " + e.getMessage());
+            updateAuthStatus(false, "서버 등록 오류");
+            Logger.error("서버 등록 중 오류 발생: " + e.getMessage());
             return false;
         } finally {
             isAuthenticationInProgress = false;
+        }
+    }
+    
+    /**
+     * 플러그인 사용 알림 전송
+     */
+    private void sendPluginUsageNotification() {
+        try {
+            Logger.info(ChatColor.YELLOW + "웹서버에 플러그인 사용 정보를 전송합니다...");
+            
+            // 비동기로 플러그인 사용 알림 전송 (인증 여부와 상관없이)
+            CompletableFuture.runAsync(() -> {
+                try {
+                    AuthWebClient.AuthResult result = webClient.sendPluginUsageNotification(currentAuthKey, currentServerInfo, "plugin_loaded");
+                    
+                    if (result.isSuccess()) {
+                        Logger.info(ChatColor.GREEN + "플러그인 사용 정보 전송 성공");
+                        Logger.debug("응답: " + result.getMessage());
+                    } else {
+                        Logger.warn(ChatColor.YELLOW + "플러그인 사용 정보 전송 실패: " + result.getMessage());
+                    }
+                } catch (Exception e) {
+                    Logger.error("플러그인 사용 정보 전송 중 오류: " + e.getMessage());
+                }
+            });
+            
+        } catch (Exception e) {
+            Logger.error("플러그인 사용 알림 전송 중 오류 발생: " + e.getMessage());
         }
     }
     

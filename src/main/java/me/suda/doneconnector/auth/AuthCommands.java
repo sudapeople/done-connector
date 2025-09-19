@@ -55,8 +55,6 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
                 return handleAuthCommand(sender, args);
             case "status":
                 return handleStatusCommand(sender, args);
-            case "register":
-                return handleRegisterCommand(sender, args);
             case "test":
                 return handleTestCommand(sender, args);
             case "help":
@@ -68,7 +66,7 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
     }
     
     /**
-     * 인증 명령어 처리
+     * 인증 명령어 처리 - 단순화
      */
     private boolean handleAuthCommand(CommandSender sender, String[] args) {
         if (args.length > 1) {
@@ -78,26 +76,16 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
         
         sender.sendMessage(ChatColor.YELLOW + "웹서버 인증을 시도합니다...");
         
-        // 비동기로 인증 수행
-        CompletableFuture.supplyAsync(() -> {
-            return authManager.performAuthentication();
-        }).thenAccept(success -> {
-            plugin.getServer().getScheduler().runTask(plugin, () -> {
-                if (success) {
-                    sender.sendMessage(ChatColor.GREEN + "인증이 성공했습니다!");
-                    Logger.info(sender.getName() + "님이 수동 인증을 성공했습니다.");
-                } else {
-                    sender.sendMessage(ChatColor.RED + "인증이 실패했습니다. 웹서버에 등록되지 않은 서버일 수 있습니다.");
-                    Logger.warn(sender.getName() + "님이 수동 인증을 시도했지만 실패했습니다.");
-                }
-            });
-        }).exceptionally(throwable -> {
-            plugin.getServer().getScheduler().runTask(plugin, () -> {
-                sender.sendMessage(ChatColor.RED + "인증 중 오류가 발생했습니다: " + throwable.getMessage());
-                Logger.error("인증 명령어 실행 중 오류 발생: " + throwable.getMessage());
-            });
-            return null;
-        });
+        // 동기로 인증 수행 (단순화)
+        boolean success = authManager.performAuthentication();
+        
+        if (success) {
+            sender.sendMessage(ChatColor.GREEN + "인증 성공! 플러그인 기능이 활성화되었습니다.");
+            Logger.info(sender.getName() + "님이 수동 인증을 성공했습니다.");
+        } else {
+            sender.sendMessage(ChatColor.RED + "인증 실패! 플러그인 기능이 비활성화되었습니다.");
+            Logger.warn(sender.getName() + "님이 수동 인증을 시도했지만 실패했습니다.");
+        }
         
         return true;
     }
@@ -189,40 +177,6 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
         return true;
     }
     
-    /**
-     * 등록 명령어 처리
-     */
-    private boolean handleRegisterCommand(CommandSender sender, String[] args) {
-        if (args.length > 1) {
-            sender.sendMessage(ChatColor.RED + "사용법: /done register");
-            return true;
-        }
-        
-        sender.sendMessage(ChatColor.YELLOW + "웹서버에 서버 등록을 시도합니다...");
-        
-        // 비동기로 서버 등록 수행
-        CompletableFuture.supplyAsync(() -> {
-            return authManager.performRegistration();
-        }).thenAccept(success -> {
-            plugin.getServer().getScheduler().runTask(plugin, () -> {
-                if (success) {
-                    sender.sendMessage(ChatColor.GREEN + "서버 등록이 완료되었습니다! 웹 대시보드에서 승인을 기다려주세요.");
-                    Logger.info(sender.getName() + "님이 서버 등록을 완료했습니다.");
-                } else {
-                    sender.sendMessage(ChatColor.RED + "서버 등록이 실패했습니다. 다시 시도해주세요.");
-                    Logger.warn(sender.getName() + "님이 서버 등록을 시도했지만 실패했습니다.");
-                }
-            });
-        }).exceptionally(throwable -> {
-            plugin.getServer().getScheduler().runTask(plugin, () -> {
-                sender.sendMessage(ChatColor.RED + "서버 등록 중 오류가 발생했습니다: " + throwable.getMessage());
-                Logger.error("서버 등록 명령어 실행 중 오류 발생: " + throwable.getMessage());
-            });
-            return null;
-        });
-        
-        return true;
-    }
     
     /**
      * 테스트 명령어 처리
@@ -297,10 +251,10 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
      */
     private void showHelp(CommandSender sender) {
         sender.sendMessage(ChatColor.GOLD + "=== DoneConnector 인증 명령어 도움말 ===");
-        sender.sendMessage(ChatColor.WHITE + "/done auth" + ChatColor.GRAY + " - 웹서버 인증 시도");
+        sender.sendMessage(ChatColor.WHITE + "/done auth" + ChatColor.GRAY + " - 웹서버 인증 시도 (관리자가 승인 후 사용)");
         sender.sendMessage(ChatColor.WHITE + "/done status" + ChatColor.GRAY + " - 인증 상태 확인");
-        sender.sendMessage(ChatColor.WHITE + "/done register" + ChatColor.GRAY + " - 웹서버에 서버 등록");
         sender.sendMessage(ChatColor.WHITE + "/done test" + ChatColor.GRAY + " - 연결 테스트");
+        sender.sendMessage(ChatColor.GRAY + "서버 등록은 서버 시작 시 자동으로 처리됩니다.");
         sender.sendMessage(ChatColor.GRAY + "모든 명령어는 OP 권한이 필요합니다.");
     }
     
@@ -318,7 +272,7 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
         }
         
         if (args.length == 1) {
-            List<String> subCommands = Arrays.asList("auth", "reload", "status", "register", "test", "help");
+            List<String> subCommands = Arrays.asList("auth", "status", "test", "help");
             
             if (args[0].isEmpty()) {
                 return subCommands;

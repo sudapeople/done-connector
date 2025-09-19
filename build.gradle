@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'me.suda'
-version = '1.11.3'
+version = '1.11.6'
 
 repositories {
     mavenCentral()
@@ -79,4 +79,9 @@ processResources {
     filesMatching('plugin.yml') {
         expand props
     }
+}
+
+jar {
+    archiveBaseName = 'done-connector'
+    archiveVersion = version
 }

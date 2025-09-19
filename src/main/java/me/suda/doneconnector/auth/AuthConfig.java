@@ -428,14 +428,14 @@ public class AuthConfig {
     
     // API 엔드포인트 URL 생성
     public String getValidateApiUrl() {
-        return webServerUrl + "/api/auth/validate.php";
+        return webServerUrl + "/api/auth/validate";
     }
     
     public String getRegisterApiUrl() {
-        return webServerUrl + "/api/auth/register.php";
+        return webServerUrl + "/api/auth/register";
     }
     
     public String getStatusApiUrl() {
-        return webServerUrl + "/api/auth/status.php";
+        return webServerUrl + "/api/auth/status";
     }
 }

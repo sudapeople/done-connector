@@ -154,6 +154,38 @@ public class AuthWebClient {
     }
     
     /**
+     * 플러그인 사용 알림 전송
+     */
+    public AuthResult sendPluginUsageNotification(String authKey, String serverInfo, String action) {
+        Logger.debug("웹서버에 플러그인 사용 알림을 전송합니다...");
+        
+        try {
+            // 서버 정보 파싱
+            Map<String, Object> serverInfoMap = parseServerInfo(serverInfo);
+            
+            // 요청 데이터 구성
+            Map<String, Object> requestData = new HashMap<>();
+            requestData.put("plugin_key", authKey);
+            requestData.put("server_info", serverInfoMap);
+            requestData.put("action", action != null ? action : "plugin_loaded");
+            requestData.put("timestamp", System.currentTimeMillis());
+            
+            // JSON 요청 데이터 생성
+            String jsonData = convertMapToJson(requestData);
+            
+            // HTTP 요청 전송 (플러그인 사용 추적 API)
+            String response = sendHttpRequest(config.getWebServerUrl() + "/api/auth/plugin_usage", "POST", jsonData);
+            
+            // 응답 파싱
+            return parseAuthResponse(response);
+            
+        } catch (Exception e) {
+            Logger.error("플러그인 사용 알림 전송 중 오류 발생: " + e.getMessage());
+            return new AuthResult(false, "플러그인 사용 알림 전송 중 오류 발생: " + e.getMessage());
+        }
+    }
+    
+    /**
      * 서버 상태 확인 요청
      */
     public AuthResult checkServerStatus(String authKey) {

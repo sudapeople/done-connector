@@ -803,6 +803,18 @@ private boolean connectSoop(Map<String, String> soopUser) {
                     Logger.warn("후원 설정을 다시 불러옵니다.");
                     try {
                         safeReload();
+                        
+                        // 리로드 후 인증 확인
+                        if (authManager != null) {
+                            Logger.info(ChatColor.YELLOW + "리로드 후 인증을 확인합니다...");
+                            boolean authSuccess = authManager.performAuthentication();
+                            if (authSuccess) {
+                                Logger.info(ChatColor.GREEN + "리로드 후 인증 확인 완료");
+                            } else {
+                                Logger.warn(ChatColor.RED + "리로드 후 인증 확인 실패 - 플러그인 기능이 비활성화됩니다");
+                            }
+                        }
+                        
                         return true;
                     } catch (Exception e) {
                         Logger.error("설정 리로드 중 오류 발생: " + e.getMessage());
@@ -860,12 +872,6 @@ private boolean connectSoop(Map<String, String> soopUser) {
                     sender.sendMessage(ChatColor.RED + "인증 시스템이 초기화되지 않았습니다.");
                     return true;
 
-                case "register":
-                    if (authCommands != null) {
-                        return authCommands.onCommand(sender, command, label, args);
-                    }
-                    sender.sendMessage(ChatColor.RED + "인증 시스템이 초기화되지 않았습니다.");
-                    return true;
 
                 case "status":
                     if (authCommands != null) {
@@ -1835,7 +1841,7 @@ private void handleAddCommand(String[] args) {
         }
 
         if (args.length == 1) {
-            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect", "test", "ranking", "stats", "auth", "register", "status"));
+            List<String> commandList = new ArrayList<>(Arrays.asList("on", "off", "reconnect", "reload", "add", "connect", "list", "autoconnect", "test", "ranking", "stats", "auth", "status"));
 
             if (args[0].isEmpty()) {
                 return commandList;
