@@ -277,9 +277,8 @@ public class AuthWebClient {
                 Logger.debug("응답 데이터: " + responseBody);
                 return responseBody;
             } else {
-                Logger.warn("HTTP 요청 실패: " + responseCode);
-                Logger.warn("오류 응답: " + responseBody);
-                throw new Exception("HTTP 요청 실패: " + responseCode + " - " + responseBody);
+                // HTTP 요청 실패 (로그 간소화)
+                throw new Exception("HTTP 요청 실패: " + responseCode);
             }
             
         } finally {

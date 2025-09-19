@@ -527,7 +527,7 @@ public class AuthManager {
             // 오류 발생 -> 플러그인 기능 비활성화
             isAuthenticated = false;
             updateAuthStatus(false, "인증 오류");
-            Logger.debug("인증 수행 중 오류 발생: " + e.getMessage());
+            // 인증 수행 중 오류 발생 (로그 간소화)
             return false;
         } finally {
             isAuthenticationInProgress = false;
