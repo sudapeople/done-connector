@@ -895,7 +895,8 @@ private boolean connectSoop(Map<String, String> soopUser) {
 
                 case "ranking":
                     if (args.length < 2) {
-                        sender.sendMessage(ChatColor.RED + "사용법: /done ranking <스트리머 플레이어> [페이지]");
+                        sender.sendMessage(ChatColor.RED + "사용법: /done ranking <스트리머 플레이어> [페이지] [all]");
+                        sender.sendMessage(ChatColor.GRAY + "  all 옵션: 테스트 후원도 포함하여 표시");
                         return false;
                     }
                     handleRankingCommand(args, sender);
@@ -1173,33 +1174,45 @@ private void handleAddCommand(String[] args) {
     private void handleRankingCommand(String[] args, CommandSender sender) {
         String playerName = args[1];
         int page = 1; // 기본 페이지는 1
+        boolean includeTest = false; // 기본적으로 테스트 후원 제외
         
-        // 페이지 번호 파싱
-        if (args.length > 2) {
-            try {
-                page = Integer.parseInt(args[2]);
-                if (page < 1) {
-                    sender.sendMessage(ChatColor.RED + "페이지 번호는 1 이상이어야 합니다.");
+        // 인수 파싱 (페이지 번호와 all 옵션)
+        for (int i = 2; i < args.length; i++) {
+            String arg = args[i];
+            if ("all".equalsIgnoreCase(arg)) {
+                includeTest = true;
+            } else {
+                try {
+                    page = Integer.parseInt(arg);
+                    if (page < 1) {
+                        sender.sendMessage(ChatColor.RED + "페이지 번호는 1 이상이어야 합니다.");
+                        return;
+                    }
+                } catch (NumberFormatException e) {
+                    sender.sendMessage(ChatColor.RED + "올바르지 않은 옵션입니다: " + arg);
+                    sender.sendMessage(ChatColor.GRAY + "사용법: /done ranking <스트리머 플레이어> [페이지] [all]");
                     return;
                 }
-            } catch (NumberFormatException e) {
-                sender.sendMessage(ChatColor.RED + "페이지 번호는 숫자로 입력해주세요.");
-                return;
             }
         }
         
-        // 플레이어 UUID 찾기
-        String streamerUuid = getPlayerUuid(playerName);
+        // 스트리머 UUID 찾기 (streamer_name으로 검색)
+        String streamerUuid = getStreamerUuidByName(playerName);
         if (streamerUuid == null) {
-            sender.sendMessage(ChatColor.RED + "플레이어 '" + playerName + "'를 찾을 수 없습니다. 서버에 접속한 적이 있는지 확인해주세요.");
+            sender.sendMessage(ChatColor.RED + "스트리머 '" + playerName + "'의 후원 데이터를 찾을 수 없습니다.");
             return;
         }
         
-        // 랭킹 데이터 조회 (테스트 후원 제외)
-        List<Map<String, Object>> ranking = getDonationRanking(streamerUuid, false);
+        // 랭킹 데이터 조회
+        List<Map<String, Object>> ranking = getDonationRanking(streamerUuid, includeTest);
         
         if (ranking.isEmpty()) {
-            sender.sendMessage(ChatColor.YELLOW + playerName + "님의 후원 데이터가 없습니다.");
+            if (includeTest) {
+                sender.sendMessage(ChatColor.YELLOW + playerName + "님의 후원 데이터가 없습니다.");
+            } else {
+                sender.sendMessage(ChatColor.YELLOW + playerName + "님의 실제 후원 데이터가 없습니다.");
+                sender.sendMessage(ChatColor.GRAY + "테스트 후원 포함: /done ranking " + playerName + " " + page + " all");
+            }
             return;
         }
         
@@ -1216,7 +1229,8 @@ private void handleAddCommand(String[] args) {
         int endIndex = Math.min(startIndex + itemsPerPage, ranking.size());
         
         // 랭킹 출력
-        sender.sendMessage(ChatColor.GOLD + "=== " + playerName + "님의 후원 랭킹 (페이지 " + page + "/" + totalPages + ") ===");
+        String titleSuffix = includeTest ? " (전체)" : " (실제 후원만)";
+        sender.sendMessage(ChatColor.GOLD + "=== " + playerName + "님의 후원 랭킹" + titleSuffix + " (페이지 " + page + "/" + totalPages + ") ===");
         
         for (int i = startIndex; i < endIndex; i++) {
             Map<String, Object> donor = ranking.get(i);
@@ -1234,7 +1248,11 @@ private void handleAddCommand(String[] args) {
         }
         
         if (page < totalPages) {
-            sender.sendMessage(ChatColor.GRAY + "다음 페이지: /done ranking " + playerName + " " + (page + 1));
+            String nextPageCmd = "/done ranking " + playerName + " " + (page + 1);
+            if (includeTest) {
+                nextPageCmd += " all";
+            }
+            sender.sendMessage(ChatColor.GRAY + "다음 페이지: " + nextPageCmd);
         }
     }
     
@@ -1301,10 +1319,10 @@ private void handleAddCommand(String[] args) {
             }
         }
         
-        // 플레이어 UUID 찾기
-        String streamerUuid = getPlayerUuid(playerName);
+        // 스트리머 UUID 찾기 (streamer_name으로 검색)
+        String streamerUuid = getStreamerUuidByName(playerName);
         if (streamerUuid == null) {
-            sender.sendMessage(ChatColor.RED + "플레이어 '" + playerName + "'를 찾을 수 없습니다. 서버에 접속한 적이 있는지 확인해주세요.");
+            sender.sendMessage(ChatColor.RED + "스트리머 '" + playerName + "'의 후원 데이터를 찾을 수 없습니다.");
             return;
         }
         
@@ -1443,9 +1461,14 @@ private void handleAddCommand(String[] args) {
                 return null;
             }
             
-            // 테스트 후원 제외
+            // 테스트 후원 제외 (null safe 처리)
             List<Map<String, Object>> realDonations = allDonations.stream()
-                .filter(donation -> !(Boolean) donation.get("is_test"))
+                .filter(donation -> {
+                    Object isTestObj = donation.get("is_test");
+                    // is_test가 null이거나 false인 경우만 포함
+                    boolean isTest = isTestObj != null && (Boolean) isTestObj;
+                    return !isTest;
+                })
                 .collect(Collectors.toList());
             
             if (realDonations.isEmpty()) {
@@ -1543,9 +1566,14 @@ private void handleAddCommand(String[] args) {
                 return null;
             }
             
-            // 테스트 후원 제외
+            // 테스트 후원 제외 (null safe 처리)
             List<Map<String, Object>> realDonations = allDonations.stream()
-                .filter(donation -> !(Boolean) donation.get("is_test"))
+                .filter(donation -> {
+                    Object isTestObj = donation.get("is_test");
+                    // is_test가 null이거나 false인 경우만 포함
+                    boolean isTest = isTestObj != null && (Boolean) isTestObj;
+                    return !isTest;
+                })
                 .collect(Collectors.toList());
             
             if (realDonations.isEmpty()) {
@@ -1879,6 +1907,91 @@ private void handleAddCommand(String[] args) {
         return false;
     }
 
+    /**
+     * config.yml과 data 폴더에서 스트리머 이름들을 수집하여 반환
+     */
+    private List<String> getStreamerNames() {
+        List<String> streamerNames = new ArrayList<>();
+        
+        // 1. config.yml에서 설정된 스트리머들의 마크닉네임(tag) 수집
+        try {
+            for (Map<String, String> chzzkUser : chzzkUserList) {
+                String tag = chzzkUser.get("tag");
+                if (tag != null && !tag.isEmpty() && !streamerNames.contains(tag)) {
+                    streamerNames.add(tag);
+                }
+            }
+            
+            for (Map<String, String> soopUser : soopUserList) {
+                String tag = soopUser.get("tag");
+                if (tag != null && !tag.isEmpty() && !streamerNames.contains(tag)) {
+                    streamerNames.add(tag);
+                }
+            }
+        } catch (Exception e) {
+            Logger.debug("config.yml에서 스트리머 이름 수집 중 오류: " + e.getMessage());
+        }
+        
+        // 2. data 폴더의 UUID.yml 파일들에서 streamer_name 값들도 수집
+        try {
+            File dataFolder = new File(getDataFolder(), "data");
+            
+            if (dataFolder.exists() && dataFolder.isDirectory()) {
+                File[] ymlFiles = dataFolder.listFiles((dir, name) -> name.endsWith(".yml"));
+                if (ymlFiles != null) {
+                    for (File ymlFile : ymlFiles) {
+                        try {
+                            FileConfiguration config = YamlConfiguration.loadConfiguration(ymlFile);
+                            String streamerName = config.getString("streamer_name");
+                            if (streamerName != null && !streamerName.isEmpty() && !streamerNames.contains(streamerName)) {
+                                streamerNames.add(streamerName);
+                            }
+                        } catch (Exception e) {
+                            Logger.debug("스트리머 이름 수집 중 오류 (파일: " + ymlFile.getName() + "): " + e.getMessage());
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Logger.debug("data 폴더에서 스트리머 이름 수집 중 오류: " + e.getMessage());
+        }
+        
+        // 알파벳순으로 정렬
+        Collections.sort(streamerNames, String.CASE_INSENSITIVE_ORDER);
+        Logger.debug("수집된 스트리머 이름들: " + streamerNames);
+        return streamerNames;
+    }
+
+    /**
+     * streamer_name으로 해당 스트리머의 UUID를 찾아 반환
+     */
+    private String getStreamerUuidByName(String streamerName) {
+        File dataFolder = new File(getDataFolder(), "data");
+        
+        if (!dataFolder.exists() || !dataFolder.isDirectory()) {
+            return null;
+        }
+        
+        File[] ymlFiles = dataFolder.listFiles((dir, name) -> name.endsWith(".yml"));
+        if (ymlFiles == null) {
+            return null;
+        }
+        
+        for (File ymlFile : ymlFiles) {
+            try {
+                FileConfiguration config = YamlConfiguration.loadConfiguration(ymlFile);
+                String fileStreamerName = config.getString("streamer_name");
+                if (streamerName.equalsIgnoreCase(fileStreamerName)) {
+                    return config.getString("streamer_uuid");
+                }
+            } catch (Exception e) {
+                Logger.debug("스트리머 UUID 검색 중 오류 (파일: " + ymlFile.getName() + "): " + e.getMessage());
+            }
+        }
+        
+        return null;
+    }
+
     public List<String> onTabComplete(CommandSender sender, @NotNull Command cmd, @NotNull String label, String[] args) {
         if (cmd.getName().equalsIgnoreCase("done") == false) {
             return Collections.emptyList();
@@ -1955,28 +2068,53 @@ private void handleAddCommand(String[] args) {
         }
 
         if (args.length == 2 && args[0].equalsIgnoreCase("ranking")) {
+            List<String> streamerNames = getStreamerNames();
             if (args[1].isEmpty()) {
-                return Bukkit.getOnlinePlayers().stream()
-                        .map(Player::getName)
-                        .collect(Collectors.toList());
+                return streamerNames;
             } else {
-                return Bukkit.getOnlinePlayers().stream()
-                        .map(Player::getName)
+                return streamerNames.stream()
                         .filter(name -> name.toLowerCase().startsWith(args[1].toLowerCase()))
                         .collect(Collectors.toList());
             }
         }
 
         if (args.length == 3 && args[0].equalsIgnoreCase("ranking")) {
-            List<String> pageNumbers = new ArrayList<>();
+            List<String> options = new ArrayList<>();
+            // 페이지 번호 추가
             for (int i = 1; i <= 10; i++) {
-                pageNumbers.add(String.valueOf(i));
+                options.add(String.valueOf(i));
             }
+            // all 옵션 추가
+            options.add("all");
+            
             if (args[2].isEmpty()) {
-                return pageNumbers;
+                return options;
             } else {
-                return pageNumbers.stream()
-                        .filter(page -> page.startsWith(args[2]))
+                return options.stream()
+                        .filter(option -> option.toLowerCase().startsWith(args[2].toLowerCase()))
+                        .collect(Collectors.toList());
+            }
+        }
+
+        if (args.length == 4 && args[0].equalsIgnoreCase("ranking")) {
+            List<String> options = new ArrayList<>();
+            // 이미 all이 포함되어 있으면 페이지 번호만, 아니면 all만
+            boolean hasAll = Arrays.asList(args).contains("all");
+            if (hasAll) {
+                // all이 이미 있으면 페이지 번호만 추가
+                for (int i = 1; i <= 10; i++) {
+                    options.add(String.valueOf(i));
+                }
+            } else {
+                // all이 없으면 all 옵션 추가
+                options.add("all");
+            }
+            
+            if (args[3].isEmpty()) {
+                return options;
+            } else {
+                return options.stream()
+                        .filter(option -> option.toLowerCase().startsWith(args[3].toLowerCase()))
                         .collect(Collectors.toList());
             }
         }
@@ -2200,29 +2338,74 @@ private void handleAddCommand(String[] args) {
      * 후원 랭킹 조회
      */
     public List<Map<String, Object>> getDonationRanking(String streamerUuid, boolean includeTest) {
+        Logger.debug("=== getDonationRanking 시작 ===");
+        Logger.debug("streamerUuid: " + streamerUuid + ", includeTest: " + includeTest);
+        
         FileConfiguration playerData = loadPlayerData(streamerUuid);
         if (playerData == null) {
+            Logger.debug("플레이어 데이터를 찾을 수 없습니다: " + streamerUuid);
             return new ArrayList<>();
         }
+
+        // 플레이어 기본 정보 로그
+        String streamerName = playerData.getString("streamer_name");
+        Logger.debug("스트리머 이름: " + streamerName);
 
         List<Map<String, Object>> donations = (List<Map<String, Object>>) playerData.getList("donations");
         if (donations == null || donations.isEmpty()) {
+            Logger.debug("후원 데이터가 없습니다: " + streamerUuid);
             return new ArrayList<>();
         }
 
+        Logger.debug("전체 후원 데이터 수: " + donations.size());
+        
+        // 각 후원 데이터 상세 로그
+        for (int i = 0; i < donations.size(); i++) {
+            Map<String, Object> donation = donations.get(i);
+            Logger.debug("후원 " + (i+1) + ": " + 
+                "donor_name=" + donation.get("donor_name") + 
+                ", amount=" + donation.get("amount") + 
+                ", is_test=" + donation.get("is_test") +
+                ", platform=" + donation.get("platform"));
+        }
+
         // 테스트 후원 포함 여부에 따라 필터링
+        List<Map<String, Object>> filteredDonations;
         if (!includeTest) {
-            donations = donations.stream()
-                .filter(donation -> !(Boolean) donation.get("is_test"))
+            filteredDonations = donations.stream()
+                .filter(donation -> {
+                    Object isTestObj = donation.get("is_test");
+                    // is_test가 null이거나 false인 경우만 포함 (null safe 처리)
+                    boolean isTest = isTestObj != null && (Boolean) isTestObj;
+                    Logger.debug("필터링 검사: is_test=" + isTestObj + ", 결과=" + !isTest);
+                    return !isTest;
+                })
                 .collect(Collectors.toList());
+            Logger.debug("테스트 제외 후 후원 데이터 수: " + filteredDonations.size());
+        } else {
+            filteredDonations = new ArrayList<>(donations);
+            Logger.debug("모든 후원 포함: " + filteredDonations.size());
+        }
+
+        if (filteredDonations.isEmpty()) {
+            Logger.debug("필터링 후 후원 데이터가 없습니다.");
+            return new ArrayList<>();
         }
 
         // 후원자별로 그룹화하고 총 후원금액 계산
         Map<String, Map<String, Object>> donorStats = new HashMap<>();
         
-        for (Map<String, Object> donation : donations) {
+        for (Map<String, Object> donation : filteredDonations) {
             String donorName = (String) donation.get("donor_name");
-            int amount = (int) donation.get("amount");
+            Object amountObj = donation.get("amount");
+            
+            if (donorName == null || amountObj == null) {
+                Logger.warn("잘못된 후원 데이터: donorName=" + donorName + ", amount=" + amountObj);
+                continue;
+            }
+            
+            int amount = (Integer) amountObj;
+            Logger.debug("처리 중인 후원: " + donorName + " - " + amount + "원");
             
             if (donorStats.containsKey(donorName)) {
                 Map<String, Object> stats = donorStats.get(donorName);
@@ -2231,19 +2414,33 @@ private void handleAddCommand(String[] args) {
                 
                 stats.put("total_amount", totalAmount + amount);
                 stats.put("total_count", totalCount + 1);
+                Logger.debug("기존 후원자 업데이트: " + donorName + " - 총액: " + (totalAmount + amount) + "원, 횟수: " + (totalCount + 1));
             } else {
                 Map<String, Object> stats = new HashMap<>();
                 stats.put("donor_name", donorName);
                 stats.put("total_amount", amount);
                 stats.put("total_count", 1);
                 donorStats.put(donorName, stats);
+                Logger.debug("새 후원자 추가: " + donorName + " - " + amount + "원, 1회");
             }
         }
 
+        Logger.debug("처리된 후원자 수: " + donorStats.size());
+
         // 총 후원금액 순으로 정렬
-        return donorStats.values().stream()
+        List<Map<String, Object>> result = donorStats.values().stream()
             .sorted((a, b) -> Integer.compare((int) b.get("total_amount"), (int) a.get("total_amount")))
             .collect(Collectors.toList());
+            
+        Logger.debug("최종 랭킹 결과:");
+        for (int i = 0; i < result.size(); i++) {
+            Map<String, Object> donor = result.get(i);
+            Logger.debug((i+1) + "위: " + donor.get("donor_name") + " - " + 
+                donor.get("total_amount") + "원 (" + donor.get("total_count") + "회)");
+        }
+        
+        Logger.debug("=== getDonationRanking 완료 ===");
+        return result;
     }
 }
 
