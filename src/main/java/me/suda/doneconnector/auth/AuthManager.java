@@ -244,7 +244,7 @@ public class AuthManager {
             }
             currentServerInfo = jsonObj.toJSONString();
             
-            Logger.info(ChatColor.GREEN + "서버 정보가 생성되었습니다: " + serverInfo.get("server_name") + " (" + externalIp + ")");
+            // 서버 정보 생성 완료 (로그 제거)
             
         } catch (Exception e) {
             Logger.error(ChatColor.RED + "서버 정보 생성 중 오류 발생: " + e.getMessage());
@@ -256,7 +256,7 @@ public class AuthManager {
      * 외부 IP 주소 조회 (내부 IP 차단) - 병렬 처리로 최적화
      */
     private String getExternalIP() {
-        Logger.info(ChatColor.YELLOW + "외부 IP 주소를 조회합니다...");
+        // 외부 IP 주소 조회 (로그 제거)
         
         try {
             // 안정적이고 믿을만한 외부 IP 조회 서비스들 (오랫동안 운영 중)
@@ -832,7 +832,7 @@ public class AuthManager {
      */
     private void sendPluginUsageNotification() {
         try {
-            Logger.info(ChatColor.YELLOW + "웹서버에 플러그인 사용 정보를 전송합니다...");
+            // 웹서버에 플러그인 사용 정보 전송 (로그 제거)
             
             // 비동기로 플러그인 사용 알림 전송 (인증 여부와 상관없이)
             CompletableFuture.runAsync(() -> {
@@ -840,7 +840,7 @@ public class AuthManager {
                     AuthWebClient.AuthResult result = webClient.sendPluginUsageNotification(currentAuthKey, currentServerInfoMap, "plugin_loaded");
                     
                     if (result.isSuccess()) {
-                        Logger.info(ChatColor.GREEN + "플러그인 사용 정보 전송 성공");
+                        // 플러그인 사용 정보 전송 성공 (로그 제거)
                     } else {
                         Logger.warn(ChatColor.YELLOW + "플러그인 사용 정보 전송 실패: " + result.getMessage());
                     }
