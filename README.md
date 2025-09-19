@@ -148,6 +148,12 @@ config.yml에 인증 관련 설정이 자동으로 추가됩니다:
 
 **로그는 모든 개발에서 가장 중요한 기능입니다.** 시스템 운영, 디버깅, 보안, 사용자 행동 분석의 핵심입니다.
 
+#### 인증 확인 스케줄 (v1.11.8+)
+- **서버 시작 시**: 즉시 인증 확인
+- **5분마다**: 주기적 인증 확인 (강화된 보안)
+- **매일 0시**: 일일 인증 확인  
+- **수동 명령어**: `/done auth`, `/done reload`
+
 #### 플러그인 로그
 - **콘솔 로그**: 서버 콘솔에서 실시간 확인
 - **파일 로그**: `plugins/done-connector/logs/` 디렉토리
@@ -171,11 +177,14 @@ config.yml에 인증 관련 설정이 자동으로 추가됩니다:
 # 실시간 로그 모니터링
 tail -f plugins/done-connector/logs/latest.log
 
+# 인증 관련 로그만 필터링
+grep "인증\|auth" plugins/done-connector/logs/latest.log
+
 # 오류 로그만 필터링
-grep "ERROR" plugins/done-connector/logs/latest.log
+grep "ERROR\|오류" plugins/done-connector/logs/latest.log
 
 # 특정 날짜 로그 확인
-grep "2024-09-20" plugins/done-connector/logs/latest.log
+grep "2025-09-20" plugins/done-connector/logs/latest.log
 ```
 
 #### 중요 원칙
@@ -192,3 +201,4 @@ grep "2024-09-20" plugins/done-connector/logs/latest.log
 - **내부 IP 오류**: 공유기 환경에서는 외부 IP를 사용해야 합니다
 - **플러그인 기능 비활성화**: `/done auth` 명령어로 재인증을 시도하세요
 - **로그 확인 필수**: 문제 발생 시 반드시 로그를 먼저 확인하세요
+- **5분 인증 확인**: 인증 취소 시 최대 5분 내 기능 비활성화
