@@ -81,13 +81,8 @@ public class AuthManager {
         
         // 5. 초기 인증 시도 (실패 시 자동 등록)
         if (!performAuthentication()) {
-            Logger.info(ChatColor.YELLOW + "인증 실패 - 자동으로 서버 등록을 시도합니다...");
-            if (performRegistration()) {
-                Logger.info(ChatColor.GREEN + "서버 자동 등록 완료 - 웹 대시보드에서 승인을 기다려주세요");
-                Logger.info(ChatColor.YELLOW + "승인 후 '/done auth' 명령어로 인증을 시도하세요");
-            } else {
-                Logger.warn(ChatColor.RED + "서버 자동 등록 실패 - 네트워크 연결을 확인하세요");
-            }
+            // 자동 등록 시도 (메시지 간소화)
+            performRegistration();
         }
         
         // 6. 자동 인증 스케줄러 시작
@@ -800,7 +795,7 @@ public class AuthManager {
         isAuthenticationInProgress = true;
         
         try {
-            Logger.info(ChatColor.YELLOW + "웹서버에 서버 등록을 시도합니다...");
+            // 웹서버에 서버 등록 시도 (로그 간소화)
             
             // 웹서버에 서버 등록 요청
             AuthWebClient.AuthResult result = webClient.registerServer(currentAuthKey, currentServerInfo);
@@ -809,18 +804,18 @@ public class AuthManager {
             if (result.isSuccess()) {
                 // 등록 성공
                 updateAuthStatus(false, "서버 등록 완료");
-                Logger.info(ChatColor.GREEN + "서버 등록 성공 - 웹 대시보드에서 승인을 기다려주세요");
+                // 서버 등록 성공 (로그 간소화)
                 return true;
             } else {
                 // 등록 실패
                 updateAuthStatus(false, "서버 등록 실패");
-                Logger.warn(ChatColor.RED + "서버 등록 실패");
+                // 서버 등록 실패 (로그 간소화)
                 return false;
             }
             
         } catch (Exception e) {
             updateAuthStatus(false, "서버 등록 오류");
-            Logger.error("서버 등록 중 오류 발생: " + e.getMessage());
+            // 서버 등록 중 오류 발생 (로그 간소화)
             return false;
         } finally {
             isAuthenticationInProgress = false;
