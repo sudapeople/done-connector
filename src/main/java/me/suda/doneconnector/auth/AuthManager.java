@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -241,50 +242,90 @@ public class AuthManager {
     }
     
     /**
-     * 외부 IP 주소 조회 (내부 IP 차단)
+     * 외부 IP 주소 조회 (내부 IP 차단) - 병렬 처리로 최적화
      */
     private String getExternalIP() {
         Logger.info(ChatColor.YELLOW + "외부 IP 주소를 조회합니다...");
         
         try {
-            // 여러 서비스에서 시도 (더 많은 서비스 추가)
+            // 여러 서비스를 병렬로 시도 (성능 최적화)
             String[] services = {
                 "http://checkip.amazonaws.com/",
                 "http://icanhazip.com/",
                 "http://ident.me/",
-                "http://whatismyip.akamai.com/",
-                "http://ipinfo.io/ip",
-                "http://ipecho.net/plain",
-                "http://ifconfig.me/ip",
                 "https://api.ipify.org/",
-                "https://ipapi.co/ip/",
-                "https://ipv4.icanhazip.com/"
+                "http://ipinfo.io/ip"
             };
             
+            // 병렬 처리를 위한 CompletableFuture 리스트
+            List<CompletableFuture<String>> futures = new ArrayList<>();
+            
             for (String service : services) {
-                try {
-                    Logger.debug("IP 조회 서비스 시도: " + service);
-                    
-                    java.net.URL url = new java.net.URL(service);
-                    java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                    conn.setConnectTimeout(8000); // 타임아웃 증가
-                    conn.setReadTimeout(10000);
-                    conn.setRequestMethod("GET");
-                    conn.setRequestProperty("User-Agent", "DoneConnector/1.11.0");
-                    
-                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
-                        String ip = reader.readLine().trim();
+                CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        Logger.debug("IP 조회 서비스 시도: " + service);
                         
-                        // IP 유효성 및 내부 IP 차단 검사
-                        if (isValidExternalIP(ip)) {
-                            Logger.info(ChatColor.GREEN + "외부 IP 조회 성공: " + ip + " (서비스: " + service + ")");
-                            return ip;
-                        } else {
-                            Logger.debug("내부 IP 차단됨: " + ip + " (서비스: " + service + ")");
+                        java.net.URL url = new java.net.URL(service);
+                        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                        conn.setConnectTimeout(5000); // 타임아웃 단축 (병렬이므로)
+                        conn.setReadTimeout(5000);
+                        conn.setRequestMethod("GET");
+                        conn.setRequestProperty("User-Agent", "DoneConnector/" + plugin.getDescription().getVersion());
+                        
+                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+                            String ip = reader.readLine().trim();
+                            
+                            // IP 유효성 및 내부 IP 차단 검사
+                            if (isValidExternalIP(ip)) {
+                                Logger.info(ChatColor.GREEN + "외부 IP 조회 성공: " + ip + " (서비스: " + service + ")");
+                                return ip;
+                            } else {
+                                Logger.debug("내부 IP 차단됨: " + ip + " (서비스: " + service + ")");
+                                throw new RuntimeException("내부 IP 차단");
+                            }
                         }
+                    } catch (Exception e) {
+                        Logger.debug("IP 조회 서비스 실패: " + service + " - " + e.getMessage());
+                        throw new RuntimeException("서비스 실패: " + e.getMessage());
                     }
-                } catch (Exception e) {
-                    Logger.debug("IP 조회 서비스 실패: " + service + " - " + e.getMessage());
+                });
+                
+                futures.add(future);
+            }
+            
+            // 첫 번째 성공한 결과 반환 (anyOf 사용)
+            try {
+                CompletableFuture<Object> anyOf = CompletableFuture.anyOf(futures.toArray(new CompletableFuture[0]));
+                String result = (String) anyOf.get(15, TimeUnit.SECONDS); // 15초 타임아웃
+                
+                // 나머지 작업들 취소 (리소스 절약)
+                futures.forEach(f -> f.cancel(true));
+                
+                return result;
+                
+            } catch (Exception e) {
+                // 병렬 처리 실패 시 기존 방식으로 폴백
+                Logger.warn("병렬 IP 조회 실패, 순차 조회로 전환...");
+                
+                for (String service : services) {
+                    try {
+                        java.net.URL url = new java.net.URL(service);
+                        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                        conn.setConnectTimeout(3000);
+                        conn.setReadTimeout(3000);
+                        conn.setRequestMethod("GET");
+                        conn.setRequestProperty("User-Agent", "DoneConnector/" + plugin.getDescription().getVersion());
+                        
+                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+                            String ip = reader.readLine().trim();
+                            if (isValidExternalIP(ip)) {
+                                Logger.info(ChatColor.GREEN + "외부 IP 조회 성공: " + ip);
+                                return ip;
+                            }
+                        }
+                    } catch (Exception ex) {
+                        Logger.debug("순차 IP 조회 실패: " + service);
+                    }
                 }
             }
             

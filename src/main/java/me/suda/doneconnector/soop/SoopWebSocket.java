@@ -24,10 +24,10 @@ public class SoopWebSocket extends WebSocketClient {
     @Getter
     private final Map<String, String> soopUser;
     private final Map<Integer, List<String>> donationRewards;
+    private final java.util.concurrent.ScheduledExecutorService sharedScheduler;
 
-    private Thread pingThread;
-
-    private boolean isAlive = true;
+    private java.util.concurrent.ScheduledFuture<?> pingTask;
+    private volatile boolean isAlive = true;
     private boolean poong = false;
 
     private static final String F = "\u000c";
@@ -54,7 +54,7 @@ public class SoopWebSocket extends WebSocketClient {
 
     private final Map<String, SoopPacket> packetMap = new HashMap<>();
 
-    public SoopWebSocket(String serverUri, Draft_6455 draft6455, SoopLiveInfo liveInfo, Map<String, String> soopUser, HashMap<Integer, List<String>> donationRewards, boolean poong) {
+    public SoopWebSocket(String serverUri, Draft_6455 draft6455, SoopLiveInfo liveInfo, Map<String, String> soopUser, HashMap<Integer, List<String>> donationRewards, boolean poong, java.util.concurrent.ScheduledExecutorService sharedScheduler) {
         super(URI.create(serverUri), draft6455);
         this.setConnectionLostTimeout(0);
         this.setSocketFactory(SSLUtils.createSSLSocketFactory());
@@ -63,6 +63,7 @@ public class SoopWebSocket extends WebSocketClient {
         this.soopUser = soopUser;
         this.donationRewards = donationRewards;
         this.poong = poong;
+        this.sharedScheduler = sharedScheduler;
     }
 
     @Override
@@ -71,34 +72,29 @@ public class SoopWebSocket extends WebSocketClient {
 
         isAlive = true;
 
-        pingThread = new Thread(() -> {
-            // Connect msg Send
-            byte[] connectPacketBytes = CONNECT_PACKET.getBytes(StandardCharsets.UTF_8);
+        // Connect msg Send
+        byte[] connectPacketBytes = CONNECT_PACKET.getBytes(StandardCharsets.UTF_8);
+        send(connectPacketBytes);
 
-            send(connectPacketBytes);
-
-            while (isAlive) {
+        // 공유 스케줄러를 사용하여 ping 및 정리 작업 수행 (성능 최적화)
+        pingTask = sharedScheduler.scheduleAtFixedRate(() -> {
+            if (isAlive && isOpen()) {
                 try {
-                    Thread.sleep(59996);
-
+                    // Ping 전송
                     byte[] pingPacketBytes = PING_PACKET.getBytes(StandardCharsets.UTF_8);
-
                     send(pingPacketBytes);
 
-                    for (Map.Entry<String, SoopPacket> entry : packetMap.entrySet()) {
-                        SoopPacket packet = entry.getValue();
-
-                        if (packet.getReceivedTime().isBefore(LocalDateTime.now().minusMinutes(1))) {
-                            packetMap.remove(entry.getKey());
-                        }
+                    // 오래된 패킷 정리 (메모리 최적화)
+                    synchronized (packetMap) {
+                        packetMap.entrySet().removeIf(entry -> 
+                            entry.getValue().getReceivedTime().isBefore(LocalDateTime.now().minusMinutes(1))
+                        );
                     }
-                } catch (InterruptedException ignore) {
-                    Logger.error("숲 웹소켓 핑 스레드가 종료되었습니다.");
+                } catch (Exception e) {
+                    Logger.error("[SoopWebSocket][" + soopUser.get("nickname") + "] ping 작업 중 오류: " + e.getMessage());
                 }
             }
-        });
-
-        pingThread.start();
+        }, 60, 60, java.util.concurrent.TimeUnit.SECONDS); // 60초마다 실행
     }
 
     @Override
@@ -242,8 +238,16 @@ public class SoopWebSocket extends WebSocketClient {
 
         isAlive = false;
 
-        pingThread.interrupt();
-        pingThread = null;
+        // 스케줄러 작업 정리 (메모리 누수 방지)
+        if (pingTask != null && !pingTask.isDone()) {
+            pingTask.cancel(false);
+            pingTask = null;
+        }
+        
+        // 패킷 맵 정리
+        synchronized (packetMap) {
+            packetMap.clear();
+        }
     }
 
     @Override

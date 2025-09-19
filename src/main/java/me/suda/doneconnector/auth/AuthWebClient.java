@@ -174,7 +174,7 @@ public class AuthWebClient {
             String jsonData = convertMapToJson(requestData);
             
             // HTTP 요청 전송 (플러그인 사용 추적 API)
-            String response = sendHttpRequest(config.getWebServerUrl() + "/api/auth/plugin_usage", "POST", jsonData);
+            String response = sendHttpRequest(config.getWebServerUrl() + "/api/auth/plugin_usage.php", "POST", jsonData);
             
             // 응답 파싱
             return parseAuthResponse(response);

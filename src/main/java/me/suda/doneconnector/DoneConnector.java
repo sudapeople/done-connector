@@ -558,28 +558,51 @@ private void disconnectByNickName(String target) {
     }
 
     private void connectChzzkList() {
+        // 동기화 범위 최소화 (성능 최적화)
+        boolean shouldConnect;
         synchronized(chzzkLock) {
             if (chzzkConnecting) {
                 Logger.warn("이미 치지직 연결 작업이 진행 중입니다.");
                 return;
             }
             chzzkConnecting = true;
+            shouldConnect = true;
+        }
+        
+        if (shouldConnect) {
             try {
                 disconnectChzzkList();
                 Thread.sleep(2000); // 연결 종료 후 잠시 대기
                 
+                // 병렬 연결 처리 (성능 최적화)
+                List<CompletableFuture<Void>> connectFutures = new ArrayList<>();
+                
                 for (Map<String, String> chzzkUser : chzzkUserList) {
-                    try {
-                        connectChzzk(chzzkUser);
-                    } catch (Exception e) {
-                        Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
-                                "] 연결 중 오류: " + e.getMessage());
-                    }
+                    CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                        try {
+                            connectChzzk(chzzkUser);
+                        } catch (Exception e) {
+                            Logger.error("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
+                                    "] 연결 중 오류: " + e.getMessage());
+                        }
+                    });
+                    connectFutures.add(future);
                 }
+                
+                // 모든 연결 완료 대기 (최대 30초)
+                try {
+                    CompletableFuture.allOf(connectFutures.toArray(new CompletableFuture[0]))
+                        .get(30, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    Logger.warn("일부 치지직 연결이 타임아웃되었습니다.");
+                }
+                
             } catch (Exception e) {
                 Logger.error("치지직 연결 중 오류 발생: " + e.getMessage());
             } finally {
-                chzzkConnecting = false;
+                synchronized(chzzkLock) {
+                    chzzkConnecting = false;
+                }
             }
         }
     }
@@ -637,7 +660,8 @@ private boolean connectSoop(Map<String, String> soopUser) {
                 liveInfo, 
                 soopUser, 
                 donationRewards, 
-                poong
+                poong,
+                sharedScheduler  // 공유 스케줄러 전달 (성능 최적화)
             );
             
             // 연결 시도
@@ -680,28 +704,51 @@ private boolean connectSoop(Map<String, String> soopUser) {
     }
 
     private void connectSoopList() {
+        // 동기화 범위 최소화 (성능 최적화)
+        boolean shouldConnect;
         synchronized(soopLock) {
             if (soopConnecting) {
                 Logger.warn("이미 숲 연결 작업이 진행 중입니다.");
                 return;
             }
             soopConnecting = true;
+            shouldConnect = true;
+        }
+        
+        if (shouldConnect) {
             try {
                 disconnectSoopList();
                 Thread.sleep(2000); // 연결 종료 후 잠시 대기
                 
+                // 병렬 연결 처리 (성능 최적화)
+                List<CompletableFuture<Void>> connectFutures = new ArrayList<>();
+                
                 for (Map<String, String> soopUser : soopUserList) {
-                    try {
-                        connectSoop(soopUser);
-                    } catch (Exception e) {
-                        Logger.error("[SoopWebsocket][" + soopUser.get("nickname") + 
-                                "] 연결 중 오류: " + e.getMessage());
-                    }
+                    CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                        try {
+                            connectSoop(soopUser);
+                        } catch (Exception e) {
+                            Logger.error("[SoopWebsocket][" + soopUser.get("nickname") + 
+                                    "] 연결 중 오류: " + e.getMessage());
+                        }
+                    });
+                    connectFutures.add(future);
                 }
+                
+                // 모든 연결 완료 대기 (최대 30초)
+                try {
+                    CompletableFuture.allOf(connectFutures.toArray(new CompletableFuture[0]))
+                        .get(30, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    Logger.warn("일부 숲 연결이 타임아웃되었습니다.");
+                }
+                
             } catch (Exception e) {
                 Logger.error("숲 연결 중 오류 발생: " + e.getMessage());
             } finally {
-                soopConnecting = false;
+                synchronized(soopLock) {
+                    soopConnecting = false;
+                }
             }
         }
     }
@@ -1591,32 +1638,33 @@ private void handleAddCommand(String[] args) {
     private boolean connectChzzkForPlayer(String playerName) {
         for (Map<String, String> chzzkUser : chzzkUserList) {
             if (playerName.equalsIgnoreCase(chzzkUser.get("tag"))) {
+                // 동기화 범위 최소화 (성능 최적화)
+                boolean alreadyConnected;
                 synchronized (chzzkLock) {
-                    // 이미 연결된 웹소켓이 있는지 재확인
-                    boolean alreadyConnected = chzzkWebSocketList.stream()
+                    alreadyConnected = chzzkWebSocketList.stream()
                         .anyMatch(ws -> ws.getChzzkUser().get("tag").equalsIgnoreCase(playerName));
+                }
+                
+                if (!alreadyConnected) {
+                    Logger.info(ChatColor.GREEN + "[자동연결] " + playerName + 
+                            "님의 치지직 채널을 연결합니다.");
+                    boolean success = connectChzzk(chzzkUser);
                     
-                    if (!alreadyConnected) {
-                        Logger.info(ChatColor.GREEN + "[자동연결] " + playerName + 
-                                "님의 치지직 채널을 연결합니다.");
-                        boolean success = connectChzzk(chzzkUser);
-                        
-                        if (!success) {
-                            // 실패 시 플레이어에게 알림
-                            Bukkit.getScheduler().runTask(plugin, () -> {
-                                Player player = Bukkit.getPlayer(playerName);
-                                if (player != null && player.isOnline()) {
-                                    player.sendMessage(ChatColor.YELLOW + 
-                                        "[SUDA] 현재 방송 중이 아니어서 치지직 채널에 연결할 수 없습니다.");
-                                }
-                            });
-                        }
-                        return success;
-                    } else {
-                        Logger.debug("[자동연결] " + playerName + 
-                                "님의 치지직 채널은 이미 연결되어 있습니다.");
-                        return true;
+                    if (!success) {
+                        // 실패 시 플레이어에게 알림 (비동기 처리)
+                        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                            Player player = Bukkit.getPlayer(playerName);
+                            if (player != null && player.isOnline()) {
+                                player.sendMessage(ChatColor.YELLOW + 
+                                    "[SUDA] 현재 방송 중이 아니어서 치지직 채널에 연결할 수 없습니다.");
+                            }
+                        }, 1L); // 1틱 지연
                     }
+                    return success;
+                } else {
+                    Logger.debug("[자동연결] " + playerName + 
+                            "님의 치지직 채널은 이미 연결되어 있습니다.");
+                    return true;
                 }
             }
         }
@@ -1812,19 +1860,21 @@ private void handleAddCommand(String[] args) {
     private boolean connectSoopForPlayer(String playerName) {
         for (Map<String, String> soopUser : soopUserList) {
             if (playerName.equalsIgnoreCase(soopUser.get("tag"))) {
+                // 동기화 범위 최소화 (성능 최적화)
+                boolean alreadyConnected;
                 synchronized (soopLock) {
-                    boolean alreadyConnected = soopWebSocketList.stream()
+                    alreadyConnected = soopWebSocketList.stream()
                         .anyMatch(ws -> ws.getSoopUser().get("tag").equalsIgnoreCase(playerName));
-                    
-                    if (!alreadyConnected) {
-                        Logger.info(ChatColor.GREEN + "[자동연결] " + playerName + 
-                                  "님의 숲 채널을 연결합니다.");
-                        return connectSoop(soopUser);
-                    } else {
-                        Logger.debug("[자동연결] " + playerName + 
-                                   "님의 숲 채널은 이미 연결되어 있습니다.");
-                        return true;
-                    }
+                }
+                
+                if (!alreadyConnected) {
+                    Logger.info(ChatColor.GREEN + "[자동연결] " + playerName + 
+                              "님의 숲 채널을 연결합니다.");
+                    return connectSoop(soopUser);
+                } else {
+                    Logger.debug("[자동연결] " + playerName + 
+                               "님의 숲 채널은 이미 연결되어 있습니다.");
+                    return true;
                 }
             }
         }

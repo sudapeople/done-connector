@@ -46,6 +46,9 @@ public class ChzzkWebSocket extends WebSocketClient {
 
     private volatile boolean isShuttingDown = false;
     private final Set<Future<?>> pendingTasks = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    
+    // 메모리 최적화를 위한 정리 스케줄러
+    private ScheduledFuture<?> cleanupTask;
 
     enum ConnectionState {
         CONNECTED, DISCONNECTED
@@ -152,6 +155,7 @@ public class ChzzkWebSocket extends WebSocketClient {
             
             sendAuthenticationMessage();
             startPingThread();
+            startCleanupTask(); // 메모리 정리 작업 시작
         }
     }
 
@@ -255,7 +259,7 @@ public class ChzzkWebSocket extends WebSocketClient {
         }
 
         pingSchedule = scheduler.scheduleAtFixedRate(() -> {
-            if (isOpen() && connectionState == ConnectionState.CONNECTED) {
+            if (isOpen() && connectionState == ConnectionState.CONNECTED && !isShuttingDown) {
                 try {
                     JSONObject pongObject = new JSONObject();
                     pongObject.put("cmd", CHZZK_CHAT_CMD_PONG);
@@ -267,6 +271,32 @@ public class ChzzkWebSocket extends WebSocketClient {
                 }
             }
         }, 10, 20, TimeUnit.SECONDS);
+    }
+    
+    /**
+     * 메모리 정리 작업 시작 (성능 최적화)
+     */
+    private void startCleanupTask() {
+        if (cleanupTask != null && !cleanupTask.isDone()) {
+            cleanupTask.cancel(false);
+        }
+        
+        cleanupTask = scheduler.scheduleAtFixedRate(() -> {
+            if (!isShuttingDown) {
+                try {
+                    // 완료된 작업들 정리
+                    pendingTasks.removeIf(Future::isDone);
+                    
+                    // 너무 많은 대기 작업이 있으면 경고
+                    if (pendingTasks.size() > 50) {
+                        Logger.warn("[ChzzkWebsocket][" + chzzkUser.get("nickname") + 
+                                "] 대기 중인 작업이 많습니다: " + pendingTasks.size());
+                    }
+                } catch (Exception e) {
+                    Logger.debug("[ChzzkWebsocket] 정리 작업 중 오류: " + e.getMessage());
+                }
+            }
+        }, 30, 30, TimeUnit.SECONDS); // 30초마다 정리
     }
 
     private void executeCommand(String tag, String nickname, int payAmount, 
@@ -356,6 +386,11 @@ public class ChzzkWebSocket extends WebSocketClient {
             if (pingSchedule != null) {
                 pingSchedule.cancel(false);
                 pingSchedule = null;
+            }
+            
+            if (cleanupTask != null) {
+                cleanupTask.cancel(false);
+                cleanupTask = null;
             }
 
             try {
