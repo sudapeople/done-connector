@@ -154,16 +154,13 @@ public class AuthWebClient {
     }
     
     /**
-     * 플러그인 사용 알림 전송
+     * 플러그인 사용 알림 전송 - 직접 Map 전달로 파싱 오류 방지
      */
-    public AuthResult sendPluginUsageNotification(String authKey, String serverInfo, String action) {
+    public AuthResult sendPluginUsageNotification(String authKey, Map<String, Object> serverInfoMap, String action) {
         Logger.debug("웹서버에 플러그인 사용 알림을 전송합니다...");
         
         try {
-            // 서버 정보 파싱
-            Map<String, Object> serverInfoMap = parseServerInfo(serverInfo);
-            
-            // 요청 데이터 구성
+            // 요청 데이터 구성 (파싱 과정 생략)
             Map<String, Object> requestData = new HashMap<>();
             requestData.put("plugin_key", authKey);
             requestData.put("server_info", serverInfoMap);
@@ -444,26 +441,31 @@ public class AuthWebClient {
     }
     
     /**
-     * 서버 정보 JSON 문자열을 Map으로 파싱
+     * 서버 정보 JSON 문자열을 Map으로 파싱 - 안전한 파싱
      */
     private Map<String, Object> parseServerInfo(String serverInfoJson) {
         try {
+            if (serverInfoJson == null || serverInfoJson.trim().isEmpty()) {
+                Logger.error("서버 정보 JSON이 비어있습니다.");
+                throw new RuntimeException("빈 서버 정보");
+            }
+            
             JSONObject serverInfoObj = (JSONObject) jsonParser.parse(serverInfoJson);
             Map<String, Object> serverInfoMap = new HashMap<>();
             
-            // 필수 필드들 추출
-            serverInfoMap.put("server_ip", serverInfoObj.get("server_ip"));
-            serverInfoMap.put("server_name", serverInfoObj.get("server_name"));
-            serverInfoMap.put("server_port", serverInfoObj.get("server_port"));
-            serverInfoMap.put("server_version", serverInfoObj.get("server_version"));
-            serverInfoMap.put("plugin_version", serverInfoObj.get("plugin_version"));
-            serverInfoMap.put("created_at", serverInfoObj.get("created_at"));
+            // 필수 필드들 안전하게 추출
+            serverInfoMap.put("server_ip", serverInfoObj.getOrDefault("server_ip", "127.0.0.1"));
+            serverInfoMap.put("server_name", serverInfoObj.getOrDefault("server_name", "Unknown-Server"));
+            serverInfoMap.put("server_port", serverInfoObj.getOrDefault("server_port", 25565));
+            serverInfoMap.put("server_version", serverInfoObj.getOrDefault("server_version", "Unknown"));
+            serverInfoMap.put("plugin_version", serverInfoObj.getOrDefault("plugin_version", "1.11.7"));
+            serverInfoMap.put("created_at", serverInfoObj.getOrDefault("created_at", 
+                LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)));
             
             return serverInfoMap;
             
-        } catch (ParseException e) {
-            Logger.error("서버 정보 파싱 중 오류 발생: " + e.getMessage());
-            Logger.error("서버 정보 JSON: " + serverInfoJson);
+        } catch (Exception e) {
+            Logger.error("서버 정보 파싱 중 오류 발생: " + (e.getMessage() != null ? e.getMessage() : "알 수 없는 오류"));
             
             // 기본값 반환
             Map<String, Object> defaultInfo = new HashMap<>();
@@ -471,7 +473,7 @@ public class AuthWebClient {
             defaultInfo.put("server_name", "Unknown-Server");
             defaultInfo.put("server_port", 25565);
             defaultInfo.put("server_version", "Unknown");
-            defaultInfo.put("plugin_version", "1.11.0");
+            defaultInfo.put("plugin_version", "1.11.7");
             defaultInfo.put("created_at", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
             
             return defaultInfo;

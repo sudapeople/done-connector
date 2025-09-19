@@ -2,10 +2,16 @@
   수다:
     식별자: bcf71dbdafcdddae524d82490db546c0
     마크닉네임: sudapeople
+  공갈:
+    식별자: 0a1cbcf7d36f92dff168d4cc0da16ff2
+    마크닉네임: Naujoon
 숲:
-  루나핀:
+  수다:
     식별자: sudapeople
     마크닉네임: sudapeople
+  공갈:
+    식별자: fkdnd123
+    마크닉네임: Naujoon
 
 # 자동연결 설정
 # - true: 서버 시작 시 모든 채널 자동 연결

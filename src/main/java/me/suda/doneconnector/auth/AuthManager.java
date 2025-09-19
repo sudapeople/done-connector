@@ -42,6 +42,7 @@ public class AuthManager {
     private volatile boolean isAuthenticationInProgress = false;
     private volatile String currentAuthKey = null;
     private volatile String currentServerInfo = null;
+    private volatile Map<String, Object> currentServerInfoMap = null;
     
     // 자동 인증 스케줄러
     private BukkitTask dailyAuthTask = null;
@@ -207,14 +208,7 @@ public class AuthManager {
             serverInfo.put("server_name", getServerName());
             
             // 외부 IP 주소 (필수) - 실패 시 예외 발생
-            String externalIp;
-            try {
-                externalIp = getExternalIP();
-            } catch (Exception e) {
-                // 로컬 테스트 환경에서는 테스트 IP 사용
-                Logger.warn(ChatColor.YELLOW + "외부 IP 조회 실패 - 테스트 IP 사용: " + e.getMessage());
-                externalIp = "127.0.0.1"; // 테스트용
-            }
+            String externalIp = getExternalIP();
             serverInfo.put("server_ip", externalIp);
             
             // 서버 포트
@@ -237,16 +231,20 @@ public class AuthManager {
             // 생성 시간
             serverInfo.put("created_at", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
             
-            // JSON 문자열로 변환
-            currentServerInfo = convertMapToJson(serverInfo);
+            // 운영자 정보 (선택사항)
+            serverInfo.put("operator_name", "Server Admin");
+            
+            // 서버 정보를 Map으로 저장 (JSON 파싱 오류 방지)
+            currentServerInfoMap = new HashMap<>(serverInfo);
+            
+            // JSON 문자열로도 변환 (호환성)
+            org.json.simple.JSONObject jsonObj = new org.json.simple.JSONObject();
+            for (Map.Entry<String, Object> entry : serverInfo.entrySet()) {
+                jsonObj.put(entry.getKey(), entry.getValue());
+            }
+            currentServerInfo = jsonObj.toJSONString();
             
             Logger.info(ChatColor.GREEN + "서버 정보가 생성되었습니다: " + serverInfo.get("server_name") + " (" + externalIp + ")");
-            Logger.info(ChatColor.YELLOW + "전송할 서버 정보:");
-            Logger.info("  - 서버명: " + serverInfo.get("server_name"));
-            Logger.info("  - 서버 IP: " + serverInfo.get("server_ip"));
-            Logger.info("  - 서버 포트: " + serverInfo.get("server_port"));
-            Logger.info("  - 플러그인 버전: " + serverInfo.get("plugin_version"));
-            Logger.info("  - 서버 버전: " + serverInfo.get("server_version"));
             
         } catch (Exception e) {
             Logger.error(ChatColor.RED + "서버 정보 생성 중 오류 발생: " + e.getMessage());
@@ -261,13 +259,13 @@ public class AuthManager {
         Logger.info(ChatColor.YELLOW + "외부 IP 주소를 조회합니다...");
         
         try {
-            // 여러 서비스를 병렬로 시도 (성능 최적화)
+            // 안정적이고 믿을만한 외부 IP 조회 서비스들 (오랫동안 운영 중)
             String[] services = {
-                "http://checkip.amazonaws.com/",
-                "http://icanhazip.com/",
-                "http://ident.me/",
-                "https://api.ipify.org/",
-                "http://ipinfo.io/ip"
+                "https://api.ipify.org/",           // Ipify - 2013년부터 운영, 매우 안정적
+                "http://checkip.amazonaws.com/",    // Amazon AWS - 2006년부터 운영
+                "http://icanhazip.com/",           // Major League Baseball - 2009년부터 운영
+                "https://ipv4.icanhazip.com/",     // IPv4 전용 버전
+                "http://ident.me/"                 // 2010년부터 운영
             };
             
             // 병렬 처리를 위한 CompletableFuture 리스트
@@ -290,7 +288,7 @@ public class AuthManager {
                             
                             // IP 유효성 및 내부 IP 차단 검사
                             if (isValidExternalIP(ip)) {
-                                Logger.info(ChatColor.GREEN + "외부 IP 조회 성공: " + ip + " (서비스: " + service + ")");
+                                // 외부 IP 조회 성공 (디버그 출력 제거)
                                 return ip;
                             } else {
                                 Logger.debug("내부 IP 차단됨: " + ip + " (서비스: " + service + ")");
@@ -447,13 +445,13 @@ public class AuthManager {
     }
     
     /**
-     * 서버명 조회 - 개선된 버전
+     * 서버명 조회 - server.properties motd 강제 사용
      */
     private String getServerName() {
         try {
             String serverName = null;
             
-            // 1. server.properties에서 motd 가져오기
+            // server.properties에서 motd 강제로 가져오기
             try {
                 File serverProperties = new File("server.properties");
                 if (serverProperties.exists()) {
@@ -471,40 +469,32 @@ public class AuthManager {
                             }
                         }
                     }
+                } else {
+                    Logger.warn(ChatColor.YELLOW + "server.properties 파일이 없습니다.");
                 }
             } catch (Exception e) {
-                Logger.debug("server.properties 읽기 실패: " + e.getMessage());
+                Logger.error("server.properties 읽기 실패: " + e.getMessage());
             }
             
-            // 2. Bukkit API 사용
+            // motd가 없거나 비어있으면 오류 발생
             if (serverName == null || serverName.trim().isEmpty()) {
-                try {
-                    serverName = plugin.getServer().getName();
-                    if (serverName != null) {
-                        serverName = serverName.trim();
-                    }
-                } catch (Exception e) {
-                    Logger.debug("Bukkit 서버명 조회 실패: " + e.getMessage());
-                }
+                Logger.error(ChatColor.RED + "server.properties에 motd가 설정되지 않았습니다!");
+                Logger.error(ChatColor.YELLOW + "server.properties에 다음과 같이 설정해주세요:");
+                Logger.error(ChatColor.WHITE + "motd=Your Server Name");
+                throw new RuntimeException("server.properties motd 설정 필요");
             }
             
-            // 3. 플러그인 기반 이름 생성
-            if (serverName == null || serverName.trim().isEmpty() || "Unknown".equals(serverName)) {
-                serverName = "DoneConnector-Server-" + System.currentTimeMillis() % 10000;
-            }
-            
-            // 4. 최종 검증 및 정리
+            // 최종 검증 및 정리
             serverName = serverName.trim();
             if (serverName.length() > 50) {
                 serverName = serverName.substring(0, 50) + "...";
             }
             
-            Logger.debug("서버명 결정: " + serverName);
             return serverName;
             
         } catch (Exception e) {
             Logger.error("서버명 조회 중 오류 발생: " + e.getMessage());
-            return "DoneConnector-Server-" + System.currentTimeMillis() % 10000;
+            throw new RuntimeException("서버명 조회 실패: " + e.getMessage());
         }
     }
     
@@ -843,22 +833,14 @@ public class AuthManager {
     private void sendPluginUsageNotification() {
         try {
             Logger.info(ChatColor.YELLOW + "웹서버에 플러그인 사용 정보를 전송합니다...");
-            Logger.debug("전송할 데이터: " + currentServerInfo);
             
             // 비동기로 플러그인 사용 알림 전송 (인증 여부와 상관없이)
             CompletableFuture.runAsync(() -> {
                 try {
-                    AuthWebClient.AuthResult result = webClient.sendPluginUsageNotification(currentAuthKey, currentServerInfo, "plugin_loaded");
+                    AuthWebClient.AuthResult result = webClient.sendPluginUsageNotification(currentAuthKey, currentServerInfoMap, "plugin_loaded");
                     
                     if (result.isSuccess()) {
                         Logger.info(ChatColor.GREEN + "플러그인 사용 정보 전송 성공");
-                        Logger.info("응답: " + result.getMessage());
-                        
-                        // 서버 수 정보도 표시
-                        Object serverCount = result.getData("server_count");
-                        if (serverCount != null) {
-                            Logger.info(ChatColor.AQUA + "현재 활성 서버 수: " + serverCount);
-                        }
                     } else {
                         Logger.warn(ChatColor.YELLOW + "플러그인 사용 정보 전송 실패: " + result.getMessage());
                     }

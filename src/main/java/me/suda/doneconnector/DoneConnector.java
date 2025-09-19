@@ -102,8 +102,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
                 Logger.info(ChatColor.GREEN + "플러그인 활성화 완료.");
             } else {
                 Logger.warn(ChatColor.RED + "인증이 완료되지 않아 플러그인 기능이 비활성화되었습니다.");
-                Logger.warn(ChatColor.YELLOW + "/done auth 명령어로 인증을 시도하거나");
-                Logger.warn(ChatColor.YELLOW + "/done register 명령어로 서버를 등록하세요.");
+                Logger.warn(ChatColor.YELLOW + "웹 대시보드에서 서버 승인 후 /done auth 명령어로 인증하세요.");
             }
         } catch (Exception e) {
             Logger.error("플러그인 초기화 중 오류가 발생했습니다: " + e.getMessage());
@@ -151,7 +150,7 @@ public final class DoneConnector extends JavaPlugin implements Listener {
             
             // 인증 명령어는 done 명령어에 통합됨 (별도 등록 불필요)
             
-            Logger.info(ChatColor.GREEN + "인증 시스템 초기화 완료");
+            // 인증 시스템 초기화 완료 (중복 메시지 제거)
             
         } catch (Exception e) {
             Logger.error("인증 시스템 초기화 중 오류 발생: " + e.getMessage());
@@ -781,8 +780,7 @@ private boolean connectSoop(Map<String, String> soopUser) {
         String subCommand = args[0].toLowerCase();
         if (!isAuthRelatedCommand(subCommand) && !isAuthenticated()) {
             sender.sendMessage(ChatColor.RED + "플러그인이 인증되지 않았습니다.");
-            sender.sendMessage(ChatColor.YELLOW + "/done auth 명령어로 인증을 시도하거나");
-            sender.sendMessage(ChatColor.YELLOW + "/done register 명령어로 서버를 등록하세요.");
+            sender.sendMessage(ChatColor.YELLOW + "웹 대시보드에서 서버 승인 후 /done auth 명령어로 인증하세요.");
             return true;
         }
 
