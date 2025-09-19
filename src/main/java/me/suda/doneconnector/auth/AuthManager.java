@@ -823,6 +823,30 @@ public class AuthManager {
     }
     
     /**
+     * 인증 성공 알림 전송 (public 메서드)
+     */
+    public void sendAuthenticationNotification(String action) {
+        try {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    AuthWebClient.AuthResult result = webClient.sendPluginUsageNotification(currentAuthKey, currentServerInfoMap, action);
+                    
+                    if (result.isSuccess()) {
+                        Logger.debug("인증 알림 전송 성공: " + action);
+                    } else {
+                        Logger.warn("인증 알림 전송 실패: " + result.getMessage());
+                    }
+                } catch (Exception e) {
+                    Logger.error("인증 알림 전송 중 오류: " + e.getMessage());
+                }
+            }, plugin.getServer().getScheduler().getMainThreadExecutor(plugin));
+            
+        } catch (Exception e) {
+            Logger.error("인증 알림 전송 중 오류 발생: " + e.getMessage());
+        }
+    }
+    
+    /**
      * 플러그인 사용 알림 전송
      */
     private void sendPluginUsageNotification() {

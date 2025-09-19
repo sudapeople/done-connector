@@ -82,6 +82,9 @@ public class AuthCommands implements CommandExecutor, TabCompleter {
         if (success) {
             sender.sendMessage(ChatColor.GREEN + "인증 성공! 플러그인 기능이 활성화되었습니다.");
             Logger.info(sender.getName() + "님이 수동 인증을 성공했습니다.");
+            
+            // 인증 성공 시 웹서버에 알림 전송
+            authManager.sendAuthenticationNotification("manual_auth_success");
         } else {
             sender.sendMessage(ChatColor.RED + "인증 실패! 플러그인 기능이 비활성화되었습니다.");
             Logger.warn(sender.getName() + "님이 수동 인증을 시도했지만 실패했습니다.");
