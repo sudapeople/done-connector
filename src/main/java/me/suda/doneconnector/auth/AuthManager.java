@@ -657,13 +657,13 @@ public class AuthManager {
             periodicAuthTask.cancel();
         }
         
-        // 10분마다 인증 확인 (고정값)
-        long ticks = 10 * 60 * 20; // 10분을 틱으로 변환
+        // 5분마다 인증 확인 (고정값)
+        long ticks = 5 * 60 * 20; // 5분을 틱으로 변환
         
         periodicAuthTask = new BukkitRunnable() {
             @Override
             public void run() {
-                Logger.info(ChatColor.YELLOW + "10분마다 인증 확인 중...");
+                Logger.info(ChatColor.YELLOW + "5분마다 인증 확인 중...");
                 performAuthenticationAsync().thenAccept(success -> {
                     if (success) {
                         Logger.info(ChatColor.GREEN + "정기 인증 확인 완료");
@@ -675,7 +675,7 @@ public class AuthManager {
             }
         }.runTaskTimer(plugin, ticks, ticks);
         
-        Logger.info(ChatColor.GREEN + "10분마다 정기 인증 스케줄러가 시작되었습니다.");
+        Logger.info(ChatColor.GREEN + "5분마다 정기 인증 스케줄러가 시작되었습니다.");
     }
     
     /**
